@@ -62,6 +62,36 @@
         100% { opacity: 1; transform: scale(1) rotate(12deg); }
       }
 
+      /* --- NEW ARTISTIC ANIMATIONS --- */
+      @keyframes spotlight-swing-left {
+        0% { transform: rotate(15deg) scale(1.5); opacity: 0.3; }
+        100% { transform: rotate(45deg) scale(1.5); opacity: 0.6; }
+      }
+      @keyframes spotlight-swing-right {
+        0% { transform: rotate(-15deg) scale(1.5); opacity: 0.3; }
+        100% { transform: rotate(-45deg) scale(1.5); opacity: 0.6; }
+      }
+
+      @keyframes dance-bounce {
+        0%, 100% { transform: translateY(0) scaleY(1); }
+        50% { transform: translateY(-10px) scaleY(1.05); }
+      }
+
+      @keyframes equalizer {
+        0% { height: 10%; }
+        50% { height: 100%; }
+        100% { height: 10%; }
+      }
+
+      .animate-spotlight-l { animation: spotlight-swing-left 4s ease-in-out infinite alternate; transform-origin: top center; }
+      .animate-spotlight-r { animation: spotlight-swing-right 4s ease-in-out infinite alternate; transform-origin: top center; }
+      .animate-dance { animation: dance-bounce 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      
+      .shadow-dancer {
+        filter: blur(2px) contrast(200%);
+        opacity: 0.7;
+      }
+
       .animate-slide-up { animation: slideInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       .animate-slide-down { animation: slideInDown 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       .animate-flip-in { animation: flipIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; perspective: 1000px; backface-visibility: hidden; }

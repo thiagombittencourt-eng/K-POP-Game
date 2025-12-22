@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_DECK } from './data/groups';
 import { CardData, GameState, StatKey, GameMode, HighScore, NetworkMessage } from './types';
 import { Card } from './components/Card';
-import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap } from 'lucide-react';
+import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap, Music, Star } from 'lucide-react';
 import Peer, { DataConnection } from 'peerjs';
 
 // --- SOUND MANAGER (Web Audio API) ---
@@ -676,48 +676,143 @@ const App: React.FC = () => {
 
   if (gameState === GameState.START) {
     return (
-      <div className="h-[100dvh] flex flex-col items-center justify-center p-4 bg-[conic-gradient(at_top_right,_var(--tw-gradient-stops))] from-indigo-900 via-purple-900 to-pink-900 text-center overflow-hidden">
-        <div className="mb-6 relative mt-4">
-           <div className="absolute -inset-4 bg-pink-500 rounded-full blur-xl opacity-50 animate-pulse"></div>
-           <div className="relative bg-white text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-violet-600 text-6xl font-black italic transform -rotate-6">
-             K-POP
+      <div className="h-[100dvh] flex flex-col items-center justify-center p-4 bg-[#0a0a0a] text-center overflow-hidden relative">
+        
+        {/* --- VIBRANT BACKGROUND & ATMOSPHERE --- */}
+        <div className="absolute inset-0 z-0">
+            {/* Pulsing Neon Blobs */}
+            <div className="absolute top-[-30%] left-[-20%] w-[80%] h-[80%] bg-purple-600/30 rounded-full blur-[120px] animate-pulse"></div>
+            <div className="absolute bottom-[-30%] right-[-20%] w-[80%] h-[80%] bg-pink-600/30 rounded-full blur-[120px] animate-pulse delay-1000"></div>
+            <div className="absolute top-[30%] left-[30%] w-[50%] h-[50%] bg-cyan-500/20 rounded-full blur-[100px] animate-pulse delay-700"></div>
+            
+            {/* Star Dust */}
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-40 mix-blend-screen"></div>
+        </div>
+
+        {/* --- STAGE LASERS (CSS Gradients) --- */}
+        <div className="absolute inset-0 pointer-events-none z-0 opacity-60 mix-blend-screen">
+           <div className="absolute top-[-10%] left-1/2 w-1 h-[150%] bg-gradient-to-b from-transparent via-cyan-400 to-transparent transform -rotate-[35deg] origin-top blur-[2px] animate-spotlight-l"></div>
+           <div className="absolute top-[-10%] left-1/2 w-1 h-[150%] bg-gradient-to-b from-transparent via-fuchsia-400 to-transparent transform rotate-[35deg] origin-top blur-[2px] animate-spotlight-r"></div>
+           <div className="absolute top-[-10%] left-1/2 w-2 h-[150%] bg-gradient-to-b from-transparent via-violet-400 to-transparent transform rotate-[0deg] origin-top blur-[4px] animate-pulse"></div>
+        </div>
+
+        {/* --- MAIN CONTENT --- */}
+        <div className="mb-12 relative z-20">
+           {/* Glow behind Title */}
+           <div className="absolute -inset-10 bg-gradient-to-r from-pink-500/30 to-purple-500/30 rounded-full blur-3xl opacity-70 animate-pulse"></div>
+           
+           {/* LOGO TITLE */}
+           <div className="relative transform hover:scale-105 transition-transform duration-500 group">
+                <div className="flex justify-center items-center gap-3 mb-4">
+                    <Star className="w-8 h-8 text-yellow-300 animate-spin-slow fill-yellow-300" />
+                    <Music className="w-10 h-10 text-pink-400 animate-bounce" />
+                    <Star className="w-8 h-8 text-cyan-300 animate-spin-slow fill-cyan-300 delay-150" />
+                </div>
+                
+                <h1 className="text-7xl md:text-9xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-yellow-400 drop-shadow-[0_0_25px_rgba(236,72,153,0.6)] tracking-tighter leading-none">
+                    K-POP
+                </h1>
+                
+                <div className="relative">
+                     <div className="text-3xl md:text-5xl font-black text-white tracking-[0.2em] mt-2 drop-shadow-[0_5px_5px_rgba(0,0,0,1)] uppercase italic transform -skew-x-12">
+                        SUPER TRUNFO
+                    </div>
+                    {/* Neon underline */}
+                    <div className="absolute -bottom-2 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-fuchsia-500 blur-[1px]"></div>
+                </div>
+                
+                {/* Visualizer Lines */}
+                <div className="flex justify-center items-end gap-1.5 h-10 mt-6 opacity-80">
+                    {[...Array(12)].map((_, i) => (
+                        <div key={i} className={`w-2 rounded-t-full ${i % 2 === 0 ? 'bg-cyan-400' : 'bg-pink-500'}`} 
+                             style={{ 
+                                 animation: `equalizer 0.${5+i%5}s infinite ease-in-out`,
+                                 boxShadow: `0 0 10px ${i % 2 === 0 ? 'cyan' : 'magenta'}`
+                             }}></div>
+                    ))}
+                </div>
            </div>
-           <div className="text-4xl font-bold text-white tracking-widest mt-2">SUPER TRUNFO</div>
         </div>
         
-        <div className="flex flex-col gap-4 w-full max-w-sm mb-8 z-10">
+        {/* BUTTONS */}
+        <div className="flex flex-col gap-4 w-full max-w-sm mb-32 z-30 relative">
             <button 
             onClick={() => startGame(GameMode.SINGLE_PLAYER)}
-            className="group relative flex items-center justify-center px-8 py-4 text-lg font-bold text-white transition-all duration-200 bg-pink-600 rounded-2xl hover:bg-pink-500 active:scale-95 shadow-lg border border-pink-400"
+            className="group relative overflow-hidden flex items-center justify-center px-8 py-5 text-lg font-black text-white transition-all duration-300 bg-black/40 border-2 border-pink-500 rounded-full hover:bg-pink-600 hover:border-pink-400 hover:shadow-[0_0_40px_rgba(236,72,153,0.8)] active:scale-95 backdrop-blur-md"
             >
-            <Smartphone className="mr-3 w-6 h-6" />
-            1 Jogador (vs CPU)
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:animate-[shimmer_1s_infinite]"></div>
+            <Smartphone className="mr-3 w-6 h-6 group-hover:rotate-12 transition-transform" />
+            <span className="tracking-wide">1 JOGADOR</span>
             </button>
 
             <button 
             onClick={() => startGame(GameMode.TWO_PLAYERS)}
-            className="group relative flex items-center justify-center px-8 py-4 text-lg font-bold text-white transition-all duration-200 bg-indigo-600 rounded-2xl hover:bg-indigo-500 active:scale-95 shadow-lg border border-indigo-400"
+            className="group relative overflow-hidden flex items-center justify-center px-8 py-5 text-lg font-black text-white transition-all duration-300 bg-black/40 border-2 border-cyan-500 rounded-full hover:bg-cyan-600 hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(34,211,238,0.8)] active:scale-95 backdrop-blur-md"
             >
-            <Users className="mr-3 w-6 h-6" />
-            2 Jogadores (Local)
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:animate-[shimmer_1s_infinite]"></div>
+            <Users className="mr-3 w-6 h-6 group-hover:rotate-12 transition-transform" />
+            <span className="tracking-wide">2 JOGADORES</span>
             </button>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 mt-2">
                 <button 
                 onClick={() => startGame(GameMode.ONLINE_HOST)}
-                className="group relative flex items-center justify-center px-4 py-4 text-sm md:text-lg font-bold text-white transition-all duration-200 bg-emerald-600 rounded-2xl hover:bg-emerald-500 active:scale-95 shadow-lg border border-emerald-400"
+                className="group relative flex items-center justify-center px-4 py-4 text-sm font-bold text-white transition-all duration-300 bg-black/40 border border-emerald-500 rounded-2xl hover:bg-emerald-600 hover:shadow-[0_0_20px_rgba(16,185,129,0.6)] active:scale-95 backdrop-blur-md"
                 >
-                <Globe className="mr-2 w-5 h-5" />
-                Criar Sala
+                <Globe className="mr-2 w-4 h-4 text-emerald-300 group-hover:text-white" />
+                CRIAR SALA
                 </button>
                 <button 
                 onClick={() => startGame(GameMode.ONLINE_GUEST)}
-                className="group relative flex items-center justify-center px-4 py-4 text-sm md:text-lg font-bold text-white transition-all duration-200 bg-teal-600 rounded-2xl hover:bg-teal-500 active:scale-95 shadow-lg border border-teal-400"
+                className="group relative flex items-center justify-center px-4 py-4 text-sm font-bold text-white transition-all duration-300 bg-black/40 border border-violet-500 rounded-2xl hover:bg-violet-600 hover:shadow-[0_0_20px_rgba(139,92,246,0.6)] active:scale-95 backdrop-blur-md"
                 >
-                <LogIn className="mr-2 w-5 h-5" />
-                Entrar
+                <LogIn className="mr-2 w-4 h-4 text-violet-300 group-hover:text-white" />
+                ENTRAR
                 </button>
             </div>
+        </div>
+
+        {/* --- CREDITS --- */}
+        <div className="absolute bottom-2 left-0 w-full text-center z-50 pointer-events-none">
+            <p className="text-[10px] text-white/20 hover:text-white/40 transition-colors cursor-default font-mono tracking-widest uppercase">
+                Dev: Thiago M. Bittencourt <span className="mx-2 text-pink-500/50">•</span> Art: Isabella P. Bittencourt
+            </p>
+        </div>
+
+        {/* --- ENHANCED DANCING SHADOWS (K-POP GROUP SILHOUETTE) --- */}
+        <div className="absolute bottom-0 left-0 w-full h-[40vh] z-10 pointer-events-none flex items-end justify-center overflow-hidden">
+             
+             {/* Stage Floor Light (Fog/Mist) */}
+             <div className="absolute bottom-0 w-full h-full bg-gradient-to-t from-fuchsia-900 via-purple-900/30 to-transparent opacity-80"></div>
+             
+             {/* Back Row Dancers (Backup Dancers) */}
+             <div className="absolute bottom-4 flex items-end justify-center gap-20 md:gap-32 opacity-40 transform scale-75 blur-[1px]">
+                 {[0, 1, 2, 3].map((i) => (
+                     <div key={`back-${i}`} 
+                          className="shadow-dancer text-black transform origin-bottom animate-dance" 
+                          style={{ animationDelay: `${i * 0.3}s`, animationDuration: '1.5s' }}>
+                         <User size={160} fill="#050505" strokeWidth={0} />
+                     </div>
+                 ))}
+             </div>
+
+             {/* Front Row Dancers (Idols) */}
+             <div className="absolute bottom-[-20px] md:bottom-[-40px] flex items-end justify-center gap-6 md:gap-12 opacity-100 z-20">
+                 {[0, 1, 2, 3, 4].map((i) => (
+                     <div key={`front-${i}`} 
+                          className="shadow-dancer text-black transform origin-bottom animate-dance" 
+                          style={{ 
+                              animationDelay: `${i * 0.15}s`, 
+                              transform: `scale(${i === 2 ? 1.1 : 0.95})`, // Center member slightly bigger
+                              filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.5))' 
+                          }}>
+                         <User size={180 + (i === 2 ? 40 : 0)} fill="#000000" strokeWidth={0} />
+                     </div>
+                 ))}
+             </div>
+             
+             {/* Stage Floor Edge (Foreground Darkness) */}
+             <div className="absolute bottom-0 w-full h-16 bg-gradient-to-t from-black via-black/90 to-transparent z-30"></div>
         </div>
       </div>
     );
