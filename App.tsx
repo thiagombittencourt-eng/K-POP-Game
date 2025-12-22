@@ -179,6 +179,7 @@ const App: React.FC = () => {
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isOnline = gameMode === GameMode.ONLINE_HOST || gameMode === GameMode.ONLINE_GUEST;
 
   // Use refs to track state in event listeners (closure trap)
@@ -193,6 +194,7 @@ const App: React.FC = () => {
     // Cleanup peer on unmount
     return () => {
       if (peerRef.current) peerRef.current.destroy();
+      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
     };
   }, []);
 
@@ -219,9 +221,10 @@ const App: React.FC = () => {
     if (peerRef.current) {
         peerRef.current.destroy();
     }
-
+    
+    // Status inicial: conectando ao servidor de sinalização (não ao oponente ainda)
     setConnectionStatus('connecting');
-    setMessage("Conectando ao servidor global...");
+    setMessage("Conectando ao servidor...");
     
     // Create Peer
     const peer = new Peer();
@@ -229,12 +232,12 @@ const App: React.FC = () => {
 
     peer.on('open', (id) => {
       setPeerId(id);
-      setConnectionStatus('idle'); // Ready for connection
+      setConnectionStatus('idle'); // Pronto para interação
       if (isHost) {
         setMessage("Aguardando oponente...");
-        setGameMode(GameMode.ONLINE_HOST);
       } else {
-        setGameMode(GameMode.ONLINE_GUEST);
+        // Guest está pronto para inserir código
+        setMessage("Insira o código do anfitrião.");
       }
     });
 
@@ -269,6 +272,17 @@ const App: React.FC = () => {
     setConnectionStatus('connecting');
     setMessage("Buscando sala...");
     
+    // Safety Timeout: Se não conectar em 10 segundos, cancela
+    if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+    
+    connectionTimeoutRef.current = setTimeout(() => {
+        if (connectionStatus === 'connecting') {
+            setConnectionStatus('error');
+            setMessage("Tempo esgotado. Verifique se o código está correto e se o anfitrião ainda está na sala.");
+            if (connRef.current) connRef.current.close();
+        }
+    }, 10000);
+
     // Tenta conectar com confiabilidade
     const conn = peerRef.current.connect(cleanId, { reliable: true });
     handleConnection(conn);
@@ -278,6 +292,12 @@ const App: React.FC = () => {
     connRef.current = conn;
 
     conn.on('open', () => {
+      // Limpa timeout de conexão se existir
+      if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+      }
+
       setConnectionStatus('connected');
       setMessage("Conectado! Preparando jogo...");
       SoundEffects.play('start');
@@ -382,6 +402,7 @@ const App: React.FC = () => {
 
     if (mode === GameMode.ONLINE_HOST || mode === GameMode.ONLINE_GUEST) {
       setGameState(GameState.LOBBY);
+      setGameMode(mode); // Set mode immediately so UI renders correctly
       initializePeer(mode === GameMode.ONLINE_HOST);
       return;
     }
@@ -696,16 +717,23 @@ const App: React.FC = () => {
                             type="text" 
                             value={joinId}
                             onChange={(e) => setJoinId(e.target.value)}
-                            placeholder="Ex: codigo-aqui"
-                            className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-center text-white font-mono text-lg focus:outline-none focus:border-emerald-500 transition-colors"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && joinId && connectionStatus !== 'connecting') {
+                                    SoundEffects.init();
+                                    connectToPeer();
+                                }
+                            }}
+                            placeholder={!peerId ? "Inicializando..." : "Ex: codigo-aqui"}
+                            disabled={!peerId || connectionStatus === 'connecting'}
+                            className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-center text-white font-mono text-lg focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
                         />
                         <button
                             onClick={() => { SoundEffects.init(); connectToPeer(); }}
-                            disabled={!joinId || connectionStatus === 'connecting'}
+                            disabled={!joinId || !peerId || connectionStatus === 'connecting'}
                             className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
                         >
                             {connectionStatus === 'connecting' ? <RefreshCw className="animate-spin" /> : <CheckCircle />}
-                            Entrar na Sala
+                            {connectionStatus === 'connecting' ? 'Conectando...' : 'Entrar na Sala'}
                         </button>
                      </div>
                 )}
