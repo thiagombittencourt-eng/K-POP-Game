@@ -222,44 +222,59 @@ const App: React.FC = () => {
         peerRef.current.destroy();
     }
     
-    // Status inicial: conectando ao servidor de sinalização (não ao oponente ainda)
+    // Status inicial: conectando ao servidor de sinalização
     setConnectionStatus('connecting');
     setMessage("Conectando ao servidor...");
     
+    // Configuração com STUN Servers do Google para furar NAT (essencial para funcionar fora da rede local)
+    const peerConfig = {
+      debug: 2, // Log levels: 0-3
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+      },
+    };
+
     // Create Peer
-    const peer = new Peer();
+    const peer = new Peer(peerConfig);
     peerRef.current = peer;
 
     peer.on('open', (id) => {
+      console.log('My Peer ID:', id);
       setPeerId(id);
       setConnectionStatus('idle'); // Pronto para interação
       if (isHost) {
         setMessage("Aguardando oponente...");
       } else {
-        // Guest está pronto para inserir código
         setMessage("Insira o código do anfitrião.");
       }
     });
 
     peer.on('connection', (conn) => {
+      console.log('Incoming connection from:', conn.peer);
       // HOST receives connection
       handleConnection(conn);
     });
 
     peer.on('error', (err: any) => {
-      // Warn instead of Error for expected scenarios (like invalid ID)
       console.warn('PeerJS Error:', err);
-      setConnectionStatus('error');
       
       // Tratamento amigável de erros
       if (err.type === 'peer-unavailable') {
+          // Reset to idle so user can try again
+          setConnectionStatus('idle');
           setMessage("Sala não encontrada. Verifique o código.");
       } else if (err.type === 'disconnected') {
+          setConnectionStatus('error');
           setMessage("Desconectado do servidor. Tentando reconectar...");
           peer.reconnect();
       } else if (err.type === 'network') {
+          setConnectionStatus('error');
           setMessage("Erro de rede. Verifique sua internet.");
       } else {
+          setConnectionStatus('error');
           setMessage("Erro de conexão P2P.");
       }
     });
@@ -278,13 +293,16 @@ const App: React.FC = () => {
     connectionTimeoutRef.current = setTimeout(() => {
         if (connectionStatus === 'connecting') {
             setConnectionStatus('error');
-            setMessage("Tempo esgotado. Verifique se o código está correto e se o anfitrião ainda está na sala.");
+            setMessage("Tempo esgotado. Tente novamente.");
             if (connRef.current) connRef.current.close();
         }
     }, 10000);
 
-    // Tenta conectar com confiabilidade
-    const conn = peerRef.current.connect(cleanId, { reliable: true });
+    console.log('Attempting to connect to:', cleanId);
+    // Connect with JSON serialization to avoid binary pack issues
+    const conn = peerRef.current.connect(cleanId, { 
+        serialization: 'json'
+    });
     handleConnection(conn);
   };
 
@@ -292,6 +310,8 @@ const App: React.FC = () => {
     connRef.current = conn;
 
     conn.on('open', () => {
+      console.log('Connection established with:', conn.peer);
+      
       // Limpa timeout de conexão se existir
       if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
@@ -319,6 +339,7 @@ const App: React.FC = () => {
     });
 
     conn.on('close', () => {
+      console.log('Connection closed');
       // Check current game state via Ref to avoid stale closure
       const currentGs = gameStateRef.current;
       if (currentGs === GameState.LOBBY || currentGs === GameState.START) {
