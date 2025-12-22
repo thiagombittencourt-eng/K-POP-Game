@@ -367,7 +367,13 @@ const App: React.FC = () => {
         break;
         
       case 'RESTART':
-        window.location.reload();
+        // HOST recebe pedido de reinício do GUEST
+        if (gameMode === GameMode.ONLINE_HOST) {
+             setMessage("Oponente pediu revanche! Reiniciando...");
+             setTimeout(() => {
+                 startOnlineGameLogic();
+             }, 1500);
+        }
         break;
     }
   };
@@ -641,7 +647,8 @@ const App: React.FC = () => {
 
       setMessage(finalMessage);
       if (isOnline) {
-         if (peerRef.current) peerRef.current.destroy();
+         // Don't destroy connection immediately anymore to allow restart
+         // if (peerRef.current) peerRef.current.destroy(); 
       }
   };
 
@@ -775,7 +782,7 @@ const App: React.FC = () => {
         {/* --- CREDITS --- */}
         <div className="absolute bottom-2 left-0 w-full text-center z-50 pointer-events-none">
             <p className="text-[10px] text-white/20 hover:text-white/40 transition-colors cursor-default font-mono tracking-widest uppercase">
-                Dev: Thiago M. Bittencourt <span className="mx-2 text-pink-500/50">•</span> Art: Isabella P. Bittencourt
+                Dev: Thiago M. Bittencourt <span className="mx-2 text-pink-500/50">•</span> Art: Isabella P. Bittencourt <span className="mx-2 text-pink-500/50">•</span> UX Test: Benicio P. Bittencourt
             </p>
         </div>
 
@@ -956,14 +963,34 @@ const App: React.FC = () => {
         <h1 className="text-3xl font-bold text-white mb-4">JOGO FINALIZADO</h1>
         <p className="text-pink-400 mb-8 text-xl font-bold px-4">{message}</p>
         
+        {/* RESTART BUTTON (SAME ROOM) */}
+        <button
+            onClick={() => {
+                if (isOnline) {
+                    if (gameMode === GameMode.ONLINE_HOST) {
+                        startOnlineGameLogic();
+                    } else {
+                        sendMessage({ type: 'RESTART' });
+                        setMessage("Solicitação de revanche enviada...");
+                    }
+                } else {
+                    startGame(gameMode);
+                }
+            }}
+            className="flex items-center px-8 py-3 mb-4 bg-emerald-600 text-white rounded-full font-bold hover:bg-emerald-500 transition-colors shadow-[0_0_20px_rgba(16,185,129,0.5)] border border-emerald-400 hover:scale-105 transform duration-200"
+        >
+            <Zap className="mr-2 fill-white" />
+            Jogar Novamente {isOnline && "(Mesma Sala)"}
+        </button>
+
         <button 
           onClick={() => {
               if (peerRef.current) peerRef.current.destroy();
               setGameState(GameState.START);
           }}
-          className="flex items-center px-8 py-3 bg-indigo-600 text-white rounded-full font-bold hover:bg-indigo-500 transition-colors shadow-lg"
+          className="flex items-center px-6 py-2 bg-indigo-900/50 text-indigo-200 rounded-full font-bold hover:bg-indigo-800 transition-colors border border-indigo-500/30"
         >
-          <RefreshCw className="mr-2" />
+          <RefreshCw className="mr-2 w-4 h-4" />
           Menu Principal
         </button>
       </div>
