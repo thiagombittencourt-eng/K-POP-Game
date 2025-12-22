@@ -104,6 +104,15 @@ const shuffleDeck = (deck: CardData[]): CardData[] => {
   return newDeck;
 };
 
+// Generic dummy card for guest view of host deck
+const DUMMY_CARD: CardData = {
+    id: '???',
+    name: 'AGUARDANDO...',
+    imageColor: 'from-gray-700 via-gray-800 to-black',
+    imageUrl: '', // Empty or placeholder
+    stats: { members: 0, albums: 0, debutYear: 0, fame: 0, awards: 0 }
+};
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.START);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.SINGLE_PLAYER);
@@ -261,7 +270,6 @@ const App: React.FC = () => {
     });
 
     conn.on('close', () => {
-      // Need check current state via ref? No, setState is fine.
       setConnectionStatus(prev => {
           if (prev === 'connected') {
              setGameState(GameState.GAME_OVER);
@@ -326,7 +334,7 @@ const App: React.FC = () => {
       case 'START_GAME':
         // GUEST ONLY: Receives deck from Host
         const myDeck = msg.deck;
-        const dummyHostDeck = Array(32 - myDeck.length).fill({ ...myDeck[0], id: 'dummy' });
+        const dummyHostDeck = Array(32 - myDeck.length).fill(DUMMY_CARD);
         
         setPlayerDeck(myDeck);
         setCpuDeck(dummyHostDeck); // Guest only has dummy host deck
@@ -895,7 +903,14 @@ const App: React.FC = () => {
 
   const isResult = gameState === GameState.RESULT;
   
-  const isOpponentMinimized = !isResult && turn === 'PLAYER';
+  // LOGIC TO MINIMIZE OPPONENT CARD:
+  // Whenever it is NOT the result screen, we minimize the opponent card.
+  // This gives the player maximum space to view their own card stats,
+  // even when waiting for the opponent to play.
+  const isOpponentMinimized = !isResult;
+  
+  // Logic for Player minimized (only for 2P local pass-and-play to hide non-active)
+  // For online, player always sees their card.
   const isPlayerMinimized = !isResult && turn === 'CPU' && gameMode === GameMode.TWO_PLAYERS;
   
   const opponentHeightClass = isResult 
@@ -948,7 +963,7 @@ const App: React.FC = () => {
                 <Card 
                     key={cpuCard.id}
                     data={cpuCard} 
-                    isHidden={(gameState === GameState.PLAYING) || (isOnline && gameState !== GameState.RESULT && !isOpponentMinimized)}
+                    isHidden={(gameState === GameState.PLAYING) && !isOpponentMinimized}
                     selectedStat={selectedStat}
                     isWinner={roundWinner === 'CPU'}
                     isLoser={roundWinner === 'PLAYER'}
