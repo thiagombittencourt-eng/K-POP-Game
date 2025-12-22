@@ -114,7 +114,11 @@ const App: React.FC = () => {
   const [playerCard, setPlayerCard] = useState<CardData | null>(null);
   const [cpuCard, setCpuCard] = useState<CardData | null>(null);
   
+  // Turn: 'PLAYER' means ME (Local User), 'CPU' means OPPONENT (or AI).
+  // In Online Host mode: PLAYER = Host, CPU = Guest
+  // In Online Guest mode: PLAYER = Guest, CPU = Host
   const [turn, setTurn] = useState<'PLAYER' | 'CPU'>('PLAYER');
+  
   const [selectedStat, setSelectedStat] = useState<StatKey | null>(null);
   const [roundWinner, setRoundWinner] = useState<'PLAYER' | 'CPU' | 'DRAW' | null>(null);
   const [message, setMessage] = useState<string>("");
@@ -126,6 +130,7 @@ const App: React.FC = () => {
   const [peerId, setPeerId] = useState<string>('');
   const [joinId, setJoinId] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  const [isProcessingMove, setIsProcessingMove] = useState(false);
   
   // Lobby "Ready" States
   const [isPlayerReady, setIsPlayerReady] = useState(false);
@@ -140,7 +145,12 @@ const App: React.FC = () => {
   const gameStateRef = useRef(gameState);
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
-  // Ref to track if both are ready inside callbacks
+  // Ref for turn and cards to access in callbacks
+  const gameDataRef = useRef({ turn, playerCard, cpuCard, playerDeck, cpuDeck });
+  useEffect(() => { 
+      gameDataRef.current = { turn, playerCard, cpuCard, playerDeck, cpuDeck }; 
+  }, [turn, playerCard, cpuCard, playerDeck, cpuDeck]);
+
   const readyRef = useRef({ player: false, opponent: false });
   useEffect(() => { 
       readyRef.current = { player: isPlayerReady, opponent: isOpponentReady };
@@ -183,7 +193,6 @@ const App: React.FC = () => {
     setIsPlayerReady(false);
     setIsOpponentReady(false);
     
-    // Explicit STUN configuration for better NAT traversal
     const peer = new Peer({
       config: {
         iceServers: [
@@ -214,7 +223,7 @@ const App: React.FC = () => {
     peer.on('error', (err: any) => {
       console.warn('PeerJS Error:', err);
       if (err.type === 'peer-unavailable') {
-          setConnectionStatus('idle'); // Reset UI
+          setConnectionStatus('idle'); 
           setMessage("Sala não encontrada. Verifique o código.");
       } else {
           setConnectionStatus('error');
@@ -224,7 +233,7 @@ const App: React.FC = () => {
   };
 
   const connectToPeer = () => {
-    const cleanId = joinId.trim().replace(/\s/g, ''); // Remove spaces
+    const cleanId = joinId.trim().replace(/\s/g, ''); 
     if (!peerRef.current || !cleanId) return;
     
     setConnectionStatus('connecting');
@@ -237,7 +246,7 @@ const App: React.FC = () => {
             setMessage("Tempo esgotado. Verifique o código.");
             if (connRef.current) connRef.current.close();
         }
-    }, 15000); // 15s timeout
+    }, 15000);
 
     const conn = peerRef.current.connect(cleanId, { serialization: 'json' });
     handleConnection(conn);
@@ -253,7 +262,6 @@ const App: React.FC = () => {
       }
       setConnectionStatus('connected');
       setMessage("Conectado! Aguardando ambos estarem prontos.");
-      // DO NOT START GAME YET. Wait for Ready signal.
     });
 
     conn.on('data', (data: unknown) => {
@@ -287,21 +295,22 @@ const App: React.FC = () => {
   };
 
   const startOnlineGameLogic = () => {
-    // Only Host executes this to ensure deck sync
+    // HOST ONLY LOGIC
     SoundEffects.play('start');
     
     const fullDeck = shuffleDeck(INITIAL_DECK);
     const mid = Math.floor(fullDeck.length / 2);
-    const pDeck = fullDeck.slice(0, mid); // Host Deck
-    const cDeck = fullDeck.slice(mid);    // Guest Deck
+    const pDeck = fullDeck.slice(0, mid); // Host Deck (Real)
+    const cDeck = fullDeck.slice(mid);    // Guest Deck (Real - stored on Host to check winner)
 
     setPlayerDeck(pDeck);
-    setCpuDeck(cDeck);
+    setCpuDeck(cDeck); // Host keeps Guest's deck to calculate results
     setPlayerCard(pDeck[0]);
     setCpuCard(cDeck[0]);
     setScores({ player: 0, cpu: 0 });
     setTurn('PLAYER'); // Host starts
 
+    // Send Guest their deck
     sendMessage({ type: 'START_GAME', deck: cDeck });
 
     setGameState(GameState.PLAYING);
@@ -322,24 +331,34 @@ const App: React.FC = () => {
         break;
 
       case 'START_GAME':
-        // Guest receives this from Host
+        // GUEST ONLY: Receives deck from Host
         const myDeck = msg.deck;
         const dummyHostDeck = Array(32 - myDeck.length).fill({ ...myDeck[0], id: 'dummy' });
         
         setPlayerDeck(myDeck);
-        setCpuDeck(dummyHostDeck);
+        setCpuDeck(dummyHostDeck); // Guest only has dummy host deck
         setPlayerCard(myDeck[0]);
         setCpuCard(dummyHostDeck[0]); 
         
         setScores({ player: 0, cpu: 0 });
-        setTurn('CPU'); // Host starts
+        setTurn('CPU'); // Host starts (CPU for Guest)
         setGameState(GameState.PLAYING);
         setMessage("Jogo iniciado! Vez do Host.");
         SoundEffects.play('start');
         break;
 
-      case 'MOVE':
-        performMove(msg.stat, msg.card);
+      case 'GUEST_MOVE':
+        // HOST ONLY: Guest sent a move. Host calculates result.
+        if (gameMode === GameMode.ONLINE_HOST) {
+           calculateAndBroadcastResult(msg.stat);
+        }
+        break;
+
+      case 'ROUND_RESULT':
+        // BOTH RECEIVE (Guest handles ui, Host ignores if it sent it, but good for sync)
+        if (gameMode === GameMode.ONLINE_GUEST) {
+           applyRoundResult(msg.winner, msg.stat, msg.hostCard, msg.guestCard);
+        }
         break;
 
       case 'NEXT_ROUND':
@@ -354,6 +373,114 @@ const App: React.FC = () => {
 
   // --- GAME LOGIC ---
 
+  const calculateAndBroadcastResult = (stat: StatKey) => {
+      // Logic runs ONLY on HOST
+      // playerCard = Host Card
+      // cpuCard = Guest Card (Real data on Host)
+      
+      const hostCard = playerCard!;
+      const guestCard = cpuCard!;
+      
+      const hostVal = hostCard.stats[stat];
+      const guestVal = guestCard.stats[stat];
+
+      let winner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
+      // Note: In Host context: PLAYER = Host, CPU = Guest
+
+      if (stat === 'debutYear') {
+        if (hostVal < guestVal) winner = 'PLAYER'; // Host wins (older)
+        else if (hostVal > guestVal) winner = 'CPU'; // Guest wins
+      } else {
+        if (hostVal > guestVal) winner = 'PLAYER';
+        else if (hostVal < guestVal) winner = 'CPU';
+      }
+      
+      if (hostVal === guestVal) winner = 'DRAW';
+
+      // Apply locally for Host
+      applyRoundResult(winner, stat, hostCard, guestCard);
+
+      // Send result to Guest
+      // Important: Translate winner for Guest perspective
+      // If Host (PLAYER) wins, Guest receives 'CPU' wins.
+      // If Guest (CPU) wins, Guest receives 'PLAYER' wins.
+      // Actually, let's keep it consistent: 'PLAYER' in message means HOST won, 'CPU' means GUEST won.
+      // We will handle the mapping in applyRoundResult.
+      
+      // Let's stick to strict roles in message to avoid confusion:
+      // We send 'PLAYER' if HOST won, 'CPU' if GUEST won.
+      sendMessage({ 
+          type: 'ROUND_RESULT', 
+          stat, 
+          winner, 
+          hostCard: hostCard, 
+          guestCard: guestCard 
+      });
+  };
+
+  const applyRoundResult = (
+      winnerRole: 'PLAYER' | 'CPU' | 'DRAW', // PLAYER=HOST, CPU=GUEST
+      stat: StatKey, 
+      hostCardData: CardData, 
+      guestCardData: CardData
+  ) => {
+      setSelectedStat(stat);
+      setGameState(GameState.RESULT);
+      setIsProcessingMove(false);
+
+      // Update displayed cards
+      if (gameMode === GameMode.ONLINE_HOST) {
+          // Host already has correct cards, but ensure consistency
+          setPlayerCard(hostCardData); 
+          setCpuCard(guestCardData);
+          setRoundWinner(winnerRole);
+          
+          if (winnerRole === 'PLAYER') {
+             setScores(prev => ({ ...prev, player: prev.player + 1 }));
+             setMessage("Você venceu a rodada!");
+             SoundEffects.play('win');
+          } else if (winnerRole === 'CPU') {
+             setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
+             setMessage("Oponente venceu a rodada!");
+             SoundEffects.play('lose');
+          } else {
+             setMessage("Empate!");
+             SoundEffects.play('draw');
+          }
+
+      } else if (gameMode === GameMode.ONLINE_GUEST) {
+          // Guest: playerCard is Guest, cpuCard is Host
+          // Update cards from message
+          setPlayerCard(guestCardData); // My card (verified)
+          setCpuCard(hostCardData);     // Host card (revealed)
+
+          // Translate Winner Role for Guest
+          // Msg PLAYER = Host -> Guest CPU
+          // Msg CPU = Guest -> Guest PLAYER
+          let localWinner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
+          if (winnerRole === 'PLAYER') localWinner = 'CPU'; // Host won
+          else if (winnerRole === 'CPU') localWinner = 'PLAYER'; // Guest won
+          
+          setRoundWinner(localWinner);
+
+          if (localWinner === 'PLAYER') {
+              setScores(prev => ({ ...prev, player: prev.player + 1 }));
+              setMessage("Você venceu a rodada!");
+              SoundEffects.play('win');
+          } else if (localWinner === 'CPU') {
+              setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
+              setMessage("Oponente venceu a rodada!");
+              SoundEffects.play('lose');
+          } else {
+              setMessage("Empate!");
+              SoundEffects.play('draw');
+          }
+      } else {
+          // Local modes (handled by performMoveLegacy)
+      }
+  };
+
+
   const startGame = (mode: GameMode) => {
     SoundEffects.init();
     SoundEffects.play('start');
@@ -365,7 +492,7 @@ const App: React.FC = () => {
       return;
     }
 
-    // Local Logic
+    // Local Logic (Single/Two Players)
     const fullDeck = shuffleDeck(INITIAL_DECK);
     const mid = Math.floor(fullDeck.length / 2);
     const pDeck = fullDeck.slice(0, mid);
@@ -384,15 +511,13 @@ const App: React.FC = () => {
     setRoundWinner(null);
   };
   
-  const performMove = (stat: StatKey, remoteCard?: CardData) => {
+  // Legacy function for offline modes
+  const performMoveLegacy = (stat: StatKey) => {
     setSelectedStat(stat);
     setGameState(GameState.RESULT);
 
-    if (remoteCard) setCpuCard(remoteCard);
-
     const pVal = playerCard!.stats[stat];
-    const comparisonCard = remoteCard || cpuCard!;
-    const cVal = comparisonCard.stats[stat];
+    const cVal = cpuCard!.stats[stat];
 
     let winner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
 
@@ -421,24 +546,30 @@ const App: React.FC = () => {
     if (winner === 'PLAYER') setScores(prev => ({ ...prev, player: prev.player + 1 }));
     if (winner === 'CPU') setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
 
-    if (isOnline) {
-       const winnerName = winner === 'PLAYER' ? 'Você' : 'Oponente';
-       setMessage(`${winnerName} venceu a rodada!`);
-    } else {
-        const winnerName = winner === 'PLAYER' ? 'Você' : 'Oponente';
-        const msg = winner === 'DRAW' ? 'Empate!' : `${winnerName} venceu a rodada!`;
-        setMessage(msg);
-    }
+    const winnerName = winner === 'PLAYER' ? 'Você' : 'Oponente';
+    const msg = winner === 'DRAW' ? 'Empate!' : `${winnerName} venceu a rodada!`;
+    setMessage(msg);
   }
 
   const onStatClick = (stat: StatKey) => {
       SoundEffects.play('select');
+      
       if (isOnline) {
+          // If it's not my turn, ignore
           if (turn === 'CPU') return;
-          sendMessage({ type: 'MOVE', stat, card: playerCard } as any); 
-          performMove(stat);
+          
+          setIsProcessingMove(true);
+          
+          if (gameMode === GameMode.ONLINE_HOST) {
+              // Host plays directly
+              calculateAndBroadcastResult(stat);
+          } else {
+              // Guest requests move
+              sendMessage({ type: 'GUEST_MOVE', stat });
+              setMessage("Aguardando resultado...");
+          }
       } else {
-          performMove(stat);
+          performMoveLegacy(stat);
       }
   }
 
@@ -464,8 +595,12 @@ const App: React.FC = () => {
         setPlayerCard(newPlayerDeck[0]);
         setCpuCard(newCpuDeck[0]);
         
-        if (winner === 'PLAYER') setTurn('PLAYER');
-        else if (winner === 'CPU') setTurn('CPU');
+        // Determine Turn
+        let nextTurn: 'PLAYER' | 'CPU' = turn; // Default keep turn on draw
+        if (winner === 'PLAYER') nextTurn = 'PLAYER';
+        else if (winner === 'CPU') nextTurn = 'CPU';
+        
+        setTurn(nextTurn);
         
         setSelectedStat(null);
         setRoundWinner(null);
@@ -475,7 +610,9 @@ const App: React.FC = () => {
             setMessage(`Rodada finalizada. Passe para ${winner === 'PLAYER' ? 'Jogador 1' : 'Jogador 2'}`);
         } else {
             setGameState(GameState.PLAYING);
-            setMessage(winner === 'PLAYER' ? "Você venceu! Sua vez." : "Oponente venceu! Vez dele.");
+            // Dynamic message based on who is playing
+            if (nextTurn === 'PLAYER') setMessage("Sua vez! Escolha um atributo.");
+            else setMessage("Vez do Oponente...");
         }
     }
   };
@@ -519,7 +656,7 @@ const App: React.FC = () => {
       }
   };
 
-  // CPU AI
+  // CPU AI (Only for Single Player)
   useEffect(() => {
     if (gameMode === GameMode.SINGLE_PLAYER && turn === 'CPU' && gameState === GameState.PLAYING && cpuCard) {
         setMessage("CPU está analisando...");
@@ -539,7 +676,7 @@ const App: React.FC = () => {
                 score += (Math.random() * 0.1); 
                 if (score > bestScore) { bestScore = score; bestStat = key; }
             });
-            performMove(bestStat);
+            performMoveLegacy(bestStat);
         }, 1500);
         return () => clearTimeout(timer);
     }
@@ -861,7 +998,7 @@ const App: React.FC = () => {
                     isHidden={false} 
                     onSelectStat={onStatClick}
                     selectedStat={selectedStat}
-                    disabled={gameState !== GameState.PLAYING || (isOnline && turn === 'CPU') || (!isOnline && turn === 'CPU')}
+                    disabled={gameState !== GameState.PLAYING || (isOnline && turn === 'CPU') || (!isOnline && turn === 'CPU') || isProcessingMove}
                     isWinner={roundWinner === 'PLAYER'}
                     isLoser={roundWinner === 'CPU'}
                     label={isOnline ? "Você" : (gameMode === GameMode.TWO_PLAYERS ? "Jogador 1" : "Você")}
