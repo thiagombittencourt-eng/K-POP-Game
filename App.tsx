@@ -141,26 +141,8 @@ const App: React.FC = () => {
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isOnline = gameMode === GameMode.ONLINE_HOST || gameMode === GameMode.ONLINE_GUEST;
 
-  // Use refs to track state in event listeners (closure trap)
-  const gameStateRef = useRef(gameState);
-  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
-
-  // Ref for turn and cards to access in callbacks
-  const gameDataRef = useRef({ turn, playerCard, cpuCard, playerDeck, cpuDeck });
-  useEffect(() => { 
-      gameDataRef.current = { turn, playerCard, cpuCard, playerDeck, cpuDeck }; 
-  }, [turn, playerCard, cpuCard, playerDeck, cpuDeck]);
-
-  const readyRef = useRef({ player: false, opponent: false });
-  useEffect(() => { 
-      readyRef.current = { player: isPlayerReady, opponent: isOpponentReady };
-      
-      // HOST ONLY: Check if both ready to start game
-      if (gameMode === GameMode.ONLINE_HOST && isPlayerReady && isOpponentReady && gameState === GameState.LOBBY) {
-          startOnlineGameLogic();
-      }
-  }, [isPlayerReady, isOpponentReady, gameMode, gameState]);
-
+  // Ref to current handleNetworkMessage to avoid stale closures in event listeners
+  const handleNetworkMessageRef = useRef<(msg: NetworkMessage) => void>(() => {});
 
   useEffect(() => {
     const saved = localStorage.getItem('kpop_trunfo_ranking');
@@ -183,6 +165,16 @@ const App: React.FC = () => {
     }
   }, [message, gameState]);
 
+  // Check for Ready Start (Host Side mostly) - But now triggered via message
+  useEffect(() => { 
+      // HOST ONLY: Check if both ready to start game via side-effects if needed, 
+      // but we handle it in network message 'READY' for host
+      if (gameMode === GameMode.ONLINE_HOST && isPlayerReady && isOpponentReady && gameState === GameState.LOBBY) {
+          startOnlineGameLogic();
+      }
+  }, [isPlayerReady, isOpponentReady, gameMode, gameState]);
+
+
   // --- ONLINE LOGIC ---
 
   const initializePeer = (isHost: boolean) => {
@@ -198,7 +190,6 @@ const App: React.FC = () => {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
         ],
       },
       debug: 1
@@ -265,19 +256,20 @@ const App: React.FC = () => {
     });
 
     conn.on('data', (data: unknown) => {
-      handleNetworkMessage(data as NetworkMessage);
+      // Use Ref to call the latest version of handler (prevents stale state)
+      handleNetworkMessageRef.current(data as NetworkMessage);
     });
 
     conn.on('close', () => {
-      const currentGs = gameStateRef.current;
-      if (currentGs === GameState.LOBBY) {
-           setConnectionStatus('error');
-           setMessage("Oponente saiu da sala.");
-           setIsOpponentReady(false);
-      } else if (currentGs !== GameState.GAME_OVER) {
-           setGameState(GameState.GAME_OVER);
-           setMessage("Oponente desconectou do jogo.");
-      }
+      // Need check current state via ref? No, setState is fine.
+      setConnectionStatus(prev => {
+          if (prev === 'connected') {
+             setGameState(GameState.GAME_OVER);
+             setMessage("Oponente desconectou do jogo.");
+             return 'error';
+          }
+          return 'error';
+      });
     });
     
     conn.on('error', (err) => {
@@ -323,6 +315,7 @@ const App: React.FC = () => {
     }
   };
 
+  // The actual handler function that uses current state
   const handleNetworkMessage = (msg: NetworkMessage) => {
     switch (msg.type) {
       case 'READY':
@@ -371,21 +364,24 @@ const App: React.FC = () => {
     }
   };
 
+  // Keep ref updated
+  useEffect(() => {
+    handleNetworkMessageRef.current = handleNetworkMessage;
+  });
+
   // --- GAME LOGIC ---
 
   const calculateAndBroadcastResult = (stat: StatKey) => {
       // Logic runs ONLY on HOST
-      // playerCard = Host Card
-      // cpuCard = Guest Card (Real data on Host)
+      const hostCard = playerCard;
+      const guestCard = cpuCard;
       
-      const hostCard = playerCard!;
-      const guestCard = cpuCard!;
-      
+      if (!hostCard || !guestCard) return;
+
       const hostVal = hostCard.stats[stat];
       const guestVal = guestCard.stats[stat];
 
       let winner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
-      // Note: In Host context: PLAYER = Host, CPU = Guest
 
       if (stat === 'debutYear') {
         if (hostVal < guestVal) winner = 'PLAYER'; // Host wins (older)
@@ -401,14 +397,6 @@ const App: React.FC = () => {
       applyRoundResult(winner, stat, hostCard, guestCard);
 
       // Send result to Guest
-      // Important: Translate winner for Guest perspective
-      // If Host (PLAYER) wins, Guest receives 'CPU' wins.
-      // If Guest (CPU) wins, Guest receives 'PLAYER' wins.
-      // Actually, let's keep it consistent: 'PLAYER' in message means HOST won, 'CPU' means GUEST won.
-      // We will handle the mapping in applyRoundResult.
-      
-      // Let's stick to strict roles in message to avoid confusion:
-      // We send 'PLAYER' if HOST won, 'CPU' if GUEST won.
       sendMessage({ 
           type: 'ROUND_RESULT', 
           stat, 
@@ -428,9 +416,7 @@ const App: React.FC = () => {
       setGameState(GameState.RESULT);
       setIsProcessingMove(false);
 
-      // Update displayed cards
       if (gameMode === GameMode.ONLINE_HOST) {
-          // Host already has correct cards, but ensure consistency
           setPlayerCard(hostCardData); 
           setCpuCard(guestCardData);
           setRoundWinner(winnerRole);
@@ -450,16 +436,13 @@ const App: React.FC = () => {
 
       } else if (gameMode === GameMode.ONLINE_GUEST) {
           // Guest: playerCard is Guest, cpuCard is Host
-          // Update cards from message
           setPlayerCard(guestCardData); // My card (verified)
           setCpuCard(hostCardData);     // Host card (revealed)
 
-          // Translate Winner Role for Guest
-          // Msg PLAYER = Host -> Guest CPU
-          // Msg CPU = Guest -> Guest PLAYER
           let localWinner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
           if (winnerRole === 'PLAYER') localWinner = 'CPU'; // Host won
           else if (winnerRole === 'CPU') localWinner = 'PLAYER'; // Guest won
+          else localWinner = 'DRAW';
           
           setRoundWinner(localWinner);
 
@@ -475,8 +458,6 @@ const App: React.FC = () => {
               setMessage("Empate!");
               SoundEffects.play('draw');
           }
-      } else {
-          // Local modes (handled by performMoveLegacy)
       }
   };
 
