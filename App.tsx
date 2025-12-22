@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_DECK } from './data/groups';
 import { CardData, GameState, StatKey, GameMode, HighScore, NetworkMessage } from './types';
 import { Card } from './components/Card';
-import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn } from 'lucide-react';
+import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap } from 'lucide-react';
 import Peer, { DataConnection } from 'peerjs';
 
 // --- SOUND MANAGER (Web Audio API) ---
@@ -21,7 +21,7 @@ const SoundEffects = {
     }
   },
 
-  play: (type: 'select' | 'win' | 'lose' | 'draw' | 'gameover' | 'start') => {
+  play: (type: 'select' | 'win' | 'lose' | 'draw' | 'gameover' | 'start' | 'ready') => {
     if (!SoundEffects.ctx) SoundEffects.init();
     const ctx = SoundEffects.ctx;
     if (!ctx) return;
@@ -35,110 +35,59 @@ const SoundEffects = {
 
     switch (type) {
       case 'select':
-        // High blip
         osc.type = 'sine';
         osc.frequency.setValueAtTime(800, t);
         osc.frequency.exponentialRampToValueAtTime(1200, t + 0.1);
         gain.gain.setValueAtTime(0.05, t);
         gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-        osc.start(t);
-        osc.stop(t + 0.1);
+        osc.start(t); osc.stop(t + 0.1);
         break;
-
+      case 'ready':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(400, t);
+        osc.frequency.linearRampToValueAtTime(800, t + 0.1);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.linearRampToValueAtTime(0, t + 0.3);
+        osc.start(t); osc.stop(t + 0.3);
+        break;
       case 'start':
-        // Swipe sound
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(200, t);
         osc.frequency.linearRampToValueAtTime(600, t + 0.2);
         gain.gain.setValueAtTime(0.05, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.2);
-        osc.start(t);
-        osc.stop(t + 0.2);
+        osc.start(t); osc.stop(t + 0.2);
         break;
-
       case 'win':
-        // Major Chord Arpeggio (C - E - G)
-        const winOsc2 = ctx.createOscillator();
-        const winOsc3 = ctx.createOscillator();
-        const winGain2 = ctx.createGain();
-        const winGain3 = ctx.createGain();
-        
-        winOsc2.connect(winGain2); winGain2.connect(ctx.destination);
-        winOsc3.connect(winGain3); winGain3.connect(ctx.destination);
-
-        // Note 1
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(523.25, t); // C5
-        gain.gain.setValueAtTime(0.05, t);
-        gain.gain.linearRampToValueAtTime(0, t + 0.4);
-        osc.start(t); osc.stop(t + 0.4);
-
-        // Note 2
-        winOsc2.type = 'triangle';
-        winOsc2.frequency.setValueAtTime(659.25, t + 0.1); // E5
-        winGain2.gain.setValueAtTime(0.05, t + 0.1);
-        winGain2.gain.linearRampToValueAtTime(0, t + 0.5);
-        winOsc2.start(t + 0.1); winOsc2.stop(t + 0.5);
-
-        // Note 3
-        winOsc3.type = 'triangle';
-        winOsc3.frequency.setValueAtTime(783.99, t + 0.2); // G5
-        winGain3.gain.setValueAtTime(0.05, t + 0.2);
-        winGain3.gain.linearRampToValueAtTime(0, t + 0.8);
-        winOsc3.start(t + 0.2); winOsc3.stop(t + 0.8);
+        // Major Chord
+        const wOsc2 = ctx.createOscillator(); const wGain2 = ctx.createGain();
+        wOsc2.connect(wGain2); wGain2.connect(ctx.destination);
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(523.25, t);
+        gain.gain.setValueAtTime(0.05, t); gain.gain.linearRampToValueAtTime(0, t + 0.4);
+        wOsc2.type = 'triangle'; wOsc2.frequency.setValueAtTime(659.25, t + 0.1);
+        wGain2.gain.setValueAtTime(0.05, t + 0.1); wGain2.gain.linearRampToValueAtTime(0, t + 0.5);
+        osc.start(t); osc.stop(t + 0.4); wOsc2.start(t + 0.1); wOsc2.stop(t + 0.5);
         break;
-
       case 'lose':
-        // Discordant / Descending
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(300, t);
         osc.frequency.linearRampToValueAtTime(100, t + 0.4);
         gain.gain.setValueAtTime(0.05, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.4);
-        osc.start(t);
-        osc.stop(t + 0.4);
+        osc.start(t); osc.stop(t + 0.4);
         break;
-      
       case 'draw':
         osc.type = 'square';
         osc.frequency.setValueAtTime(400, t);
         gain.gain.setValueAtTime(0.03, t);
         gain.gain.linearRampToValueAtTime(0, t + 0.2);
-        osc.start(t);
-        osc.stop(t + 0.2);
-        break;
-
-      case 'gameover':
-        // Fanfareish
-        const gOsc = ctx.createOscillator();
-        const gGain = ctx.createGain();
-        gOsc.connect(gGain); gGain.connect(ctx.destination);
-        
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(523.25, t); // C5
-        gain.gain.setValueAtTime(0.1, t);
-        gain.gain.setValueAtTime(0, t+0.15);
         osc.start(t); osc.stop(t + 0.2);
-
-        setTimeout(() => {
-           const o2 = ctx.createOscillator();
-           const g2 = ctx.createGain();
-           o2.type = 'square'; o2.connect(g2); g2.connect(ctx.destination);
-           o2.frequency.setValueAtTime(523.25, ctx.currentTime);
-           g2.gain.setValueAtTime(0.1, ctx.currentTime);
-           g2.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
-           o2.start(ctx.currentTime); o2.stop(ctx.currentTime + 0.4);
-        }, 150);
-
-        setTimeout(() => {
-           const o3 = ctx.createOscillator();
-           const g3 = ctx.createGain();
-           o3.type = 'square'; o3.connect(g3); g3.connect(ctx.destination);
-           o3.frequency.setValueAtTime(783.99, ctx.currentTime);
-           g3.gain.setValueAtTime(0.1, ctx.currentTime);
-           g3.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.0);
-           o3.start(ctx.currentTime); o3.stop(ctx.currentTime + 1.0);
-        }, 300);
+        break;
+      case 'gameover':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(523.25, t);
+        gain.gain.setValueAtTime(0.1, t); gain.gain.linearRampToValueAtTime(0, t+0.2);
+        osc.start(t); osc.stop(t + 0.2);
         break;
     }
   }
@@ -177,6 +126,11 @@ const App: React.FC = () => {
   const [peerId, setPeerId] = useState<string>('');
   const [joinId, setJoinId] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  
+  // Lobby "Ready" States
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [isOpponentReady, setIsOpponentReady] = useState(false);
+
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -186,123 +140,106 @@ const App: React.FC = () => {
   const gameStateRef = useRef(gameState);
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
+  // Ref to track if both are ready inside callbacks
+  const readyRef = useRef({ player: false, opponent: false });
+  useEffect(() => { 
+      readyRef.current = { player: isPlayerReady, opponent: isOpponentReady };
+      
+      // HOST ONLY: Check if both ready to start game
+      if (gameMode === GameMode.ONLINE_HOST && isPlayerReady && isOpponentReady && gameState === GameState.LOBBY) {
+          startOnlineGameLogic();
+      }
+  }, [isPlayerReady, isOpponentReady, gameMode, gameState]);
+
+
   useEffect(() => {
     const saved = localStorage.getItem('kpop_trunfo_ranking');
     if (saved) {
       setHighScores(JSON.parse(saved));
     }
-    // Cleanup peer on unmount
     return () => {
       if (peerRef.current) peerRef.current.destroy();
       if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
     };
   }, []);
 
-  // Notificação com auto-dismiss quando o jogo está em andamento (para não atrapalhar a escolha)
+  // Notificação com auto-dismiss
   useEffect(() => {
     if (message && gameState === GameState.PLAYING) {
       const timer = setTimeout(() => {
         setMessage("");
-      }, 2500); // Some após 2.5 segundos
+      }, 3000);
       return () => clearTimeout(timer);
     }
   }, [message, gameState]);
 
-  const saveHighScore = (winnerName: string, points: number) => {
-    const newScore: HighScore = { name: winnerName, roundsWon: points, date: new Date().toLocaleDateString() };
-    const updated = [...highScores, newScore].sort((a, b) => b.roundsWon - a.roundsWon).slice(0, 5);
-    setHighScores(updated);
-    localStorage.setItem('kpop_trunfo_ranking', JSON.stringify(updated));
-  };
-
   // --- ONLINE LOGIC ---
 
   const initializePeer = (isHost: boolean) => {
-    if (peerRef.current) {
-        peerRef.current.destroy();
-    }
+    if (peerRef.current) peerRef.current.destroy();
     
-    // Status inicial: conectando ao servidor de sinalização
     setConnectionStatus('connecting');
     setMessage("Conectando ao servidor...");
+    setIsPlayerReady(false);
+    setIsOpponentReady(false);
     
-    // Configuração com STUN Servers do Google para furar NAT (essencial para funcionar fora da rede local)
-    const peerConfig = {
-      debug: 2, // Log levels: 0-3
+    // Explicit STUN configuration for better NAT traversal
+    const peer = new Peer({
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
         ],
       },
-    };
-
-    // Create Peer
-    const peer = new Peer(peerConfig);
+      debug: 1
+    });
+    
     peerRef.current = peer;
 
     peer.on('open', (id) => {
-      console.log('My Peer ID:', id);
       setPeerId(id);
-      setConnectionStatus('idle'); // Pronto para interação
+      setConnectionStatus('idle');
       if (isHost) {
-        setMessage("Aguardando oponente...");
+        setMessage("Aguardando oponente entrar na sala...");
       } else {
-        setMessage("Insira o código do anfitrião.");
+        setMessage("Insira o código da sala.");
       }
     });
 
     peer.on('connection', (conn) => {
-      console.log('Incoming connection from:', conn.peer);
-      // HOST receives connection
       handleConnection(conn);
     });
 
     peer.on('error', (err: any) => {
       console.warn('PeerJS Error:', err);
-      
-      // Tratamento amigável de erros
       if (err.type === 'peer-unavailable') {
-          // Reset to idle so user can try again
-          setConnectionStatus('idle');
+          setConnectionStatus('idle'); // Reset UI
           setMessage("Sala não encontrada. Verifique o código.");
-      } else if (err.type === 'disconnected') {
-          setConnectionStatus('error');
-          setMessage("Desconectado do servidor. Tentando reconectar...");
-          peer.reconnect();
-      } else if (err.type === 'network') {
-          setConnectionStatus('error');
-          setMessage("Erro de rede. Verifique sua internet.");
       } else {
           setConnectionStatus('error');
-          setMessage("Erro de conexão P2P.");
+          setMessage("Erro de conexão. Tente recarregar.");
       }
     });
   };
 
   const connectToPeer = () => {
-    const cleanId = joinId.trim();
+    const cleanId = joinId.trim().replace(/\s/g, ''); // Remove spaces
     if (!peerRef.current || !cleanId) return;
     
     setConnectionStatus('connecting');
     setMessage("Buscando sala...");
     
-    // Safety Timeout: Se não conectar em 10 segundos, cancela
     if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
-    
     connectionTimeoutRef.current = setTimeout(() => {
         if (connectionStatus === 'connecting') {
             setConnectionStatus('error');
-            setMessage("Tempo esgotado. Tente novamente.");
+            setMessage("Tempo esgotado. Verifique o código.");
             if (connRef.current) connRef.current.close();
         }
-    }, 10000);
+    }, 15000); // 15s timeout
 
-    console.log('Attempting to connect to:', cleanId);
-    // Connect with JSON serialization to avoid binary pack issues
-    const conn = peerRef.current.connect(cleanId, { 
-        serialization: 'json'
-    });
+    const conn = peerRef.current.connect(cleanId, { serialization: 'json' });
     handleConnection(conn);
   };
 
@@ -310,68 +247,65 @@ const App: React.FC = () => {
     connRef.current = conn;
 
     conn.on('open', () => {
-      console.log('Connection established with:', conn.peer);
-      
-      // Limpa timeout de conexão se existir
       if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
       }
-
       setConnectionStatus('connected');
-      setMessage("Conectado! Preparando jogo...");
-      SoundEffects.play('start');
-      
-      // If I am Host, I need to start the game logic
-      if (gameMode === GameMode.ONLINE_HOST) {
-        startOnlineGameAsHost();
-      }
+      setMessage("Conectado! Aguardando ambos estarem prontos.");
+      // DO NOT START GAME YET. Wait for Ready signal.
     });
 
     conn.on('data', (data: unknown) => {
-      handleCustomNetworkMessage(data);
-    });
-
-    conn.on('error', (err) => {
-        console.warn("Connection Error:", err);
-        setConnectionStatus('error');
-        setMessage("Erro na conexão de dados.");
+      handleNetworkMessage(data as NetworkMessage);
     });
 
     conn.on('close', () => {
-      console.log('Connection closed');
-      // Check current game state via Ref to avoid stale closure
       const currentGs = gameStateRef.current;
-      if (currentGs === GameState.LOBBY || currentGs === GameState.START) {
+      if (currentGs === GameState.LOBBY) {
            setConnectionStatus('error');
-           setMessage("Conexão falhou.");
-      } else {
-           setConnectionStatus('error');
-           setMessage("Oponente desconectou.");
+           setMessage("Oponente saiu da sala.");
+           setIsOpponentReady(false);
+      } else if (currentGs !== GameState.GAME_OVER) {
            setGameState(GameState.GAME_OVER);
+           setMessage("Oponente desconectou do jogo.");
       }
+    });
+    
+    conn.on('error', (err) => {
+        console.error("Connection data error", err);
+        setMessage("Erro na transmissão de dados.");
     });
   };
 
-  const startOnlineGameAsHost = () => {
+  const handlePlayerReady = () => {
+      if (!connRef.current || connectionStatus !== 'connected') return;
+      
+      SoundEffects.play('select');
+      setIsPlayerReady(true);
+      sendMessage({ type: 'READY' });
+  };
+
+  const startOnlineGameLogic = () => {
+    // Only Host executes this to ensure deck sync
+    SoundEffects.play('start');
+    
     const fullDeck = shuffleDeck(INITIAL_DECK);
     const mid = Math.floor(fullDeck.length / 2);
     const pDeck = fullDeck.slice(0, mid); // Host Deck
     const cDeck = fullDeck.slice(mid);    // Guest Deck
 
-    // Setup Local (Host)
     setPlayerDeck(pDeck);
-    setCpuDeck(cDeck); // In online mode, 'CPU' variable holds the remote player's state
+    setCpuDeck(cDeck);
     setPlayerCard(pDeck[0]);
     setCpuCard(cDeck[0]);
     setScores({ player: 0, cpu: 0 });
     setTurn('PLAYER'); // Host starts
 
-    // Send Guest Deck to Guest
     sendMessage({ type: 'START_GAME', deck: cDeck });
 
     setGameState(GameState.PLAYING);
-    setMessage("Sua vez! Escolha um atributo.");
+    setMessage("Jogo iniciado! Sua vez.");
   };
 
   const sendMessage = (msg: NetworkMessage) => {
@@ -382,8 +316,13 @@ const App: React.FC = () => {
 
   const handleNetworkMessage = (msg: NetworkMessage) => {
     switch (msg.type) {
+      case 'READY':
+        setIsOpponentReady(true);
+        SoundEffects.play('ready');
+        break;
+
       case 'START_GAME':
-        // Guest receives their deck
+        // Guest receives this from Host
         const myDeck = msg.deck;
         const dummyHostDeck = Array(32 - myDeck.length).fill({ ...myDeck[0], id: 'dummy' });
         
@@ -393,19 +332,17 @@ const App: React.FC = () => {
         setCpuCard(dummyHostDeck[0]); 
         
         setScores({ player: 0, cpu: 0 });
-        setTurn('CPU'); // Host starts, so for Guest, it's 'CPU' (Opponent) turn
+        setTurn('CPU'); // Host starts
         setGameState(GameState.PLAYING);
-        setMessage("Aguardando Jogador 1 (Host)...");
+        setMessage("Jogo iniciado! Vez do Host.");
         SoundEffects.play('start');
         break;
 
       case 'MOVE':
-        // Opponent made a move
-        handleStatSelect(msg.stat, true);
+        performMove(msg.stat, msg.card);
         break;
 
       case 'NEXT_ROUND':
-        // Opponent clicked "Next"
         if (roundWinner) resolveRound(roundWinner, true);
         break;
         
@@ -418,19 +355,19 @@ const App: React.FC = () => {
   // --- GAME LOGIC ---
 
   const startGame = (mode: GameMode) => {
-    SoundEffects.init(); // Resume AudioContext
+    SoundEffects.init();
     SoundEffects.play('start');
 
     if (mode === GameMode.ONLINE_HOST || mode === GameMode.ONLINE_GUEST) {
       setGameState(GameState.LOBBY);
-      setGameMode(mode); // Set mode immediately so UI renders correctly
+      setGameMode(mode);
       initializePeer(mode === GameMode.ONLINE_HOST);
       return;
     }
 
-    // Local/Single Player Logic
+    // Local Logic
     const fullDeck = shuffleDeck(INITIAL_DECK);
-    const mid = Math.floor(fullDeck.length / 2); // 16 cartas para cada
+    const mid = Math.floor(fullDeck.length / 2);
     const pDeck = fullDeck.slice(0, mid);
     const cDeck = fullDeck.slice(mid);
 
@@ -447,18 +384,13 @@ const App: React.FC = () => {
     setRoundWinner(null);
   };
   
-  // Re-implementing handleStatSelect with the logic fix:
   const performMove = (stat: StatKey, remoteCard?: CardData) => {
     setSelectedStat(stat);
     setGameState(GameState.RESULT);
 
-    // If we received a remote card (Online mode), update the placeholder cpuCard
-    if (remoteCard) {
-        setCpuCard(remoteCard);
-    }
+    if (remoteCard) setCpuCard(remoteCard);
 
     const pVal = playerCard!.stats[stat];
-    // Use remote card stats if available, otherwise current cpuCard
     const comparisonCard = remoteCard || cpuCard!;
     const cVal = comparisonCard.stats[stat];
 
@@ -486,11 +418,9 @@ const App: React.FC = () => {
 
     setRoundWinner(winner);
     
-    // Atualiza placar
     if (winner === 'PLAYER') setScores(prev => ({ ...prev, player: prev.player + 1 }));
     if (winner === 'CPU') setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
 
-    // Update Message for Result
     if (isOnline) {
        const winnerName = winner === 'PLAYER' ? 'Você' : 'Oponente';
        setMessage(`${winnerName} venceu a rodada!`);
@@ -501,55 +431,41 @@ const App: React.FC = () => {
     }
   }
 
-  // Wrapper for the UI interaction
   const onStatClick = (stat: StatKey) => {
       SoundEffects.play('select');
       if (isOnline) {
-          if (turn === 'CPU') return; // Not my turn
-          // Send my card details so opponent can see
+          if (turn === 'CPU') return;
           sendMessage({ type: 'MOVE', stat, card: playerCard } as any); 
           performMove(stat);
       } else {
-          handleStatSelect(stat);
+          performMove(stat);
       }
-  }
-
-  // Original Local Logic (Kept for compatibility)
-  const handleStatSelect = (stat: StatKey, fromNetwork = false) => {
-      performMove(stat);
   }
 
   const resolveRound = (winner: 'PLAYER' | 'CPU' | 'DRAW', fromNetwork = false) => {
     if (!playerCard || !cpuCard) return;
     
-    // Play a small shuffle sound when cards move
     SoundEffects.play('select'); 
 
     if (isOnline && !fromNetwork) {
         sendMessage({ type: 'NEXT_ROUND' });
     }
 
-    // REGRA NOVA: CARTAS SÃO DESCARTADAS, NÃO REAPROVEITADAS
-    // Remove a carta do topo de ambos os baralhos
     const newPlayerDeck = [...playerDeck];
     const newCpuDeck = [...cpuDeck]; 
     newPlayerDeck.shift();
     newCpuDeck.shift();
 
-    // Se acabaram as cartas, fim de jogo
     if (newPlayerDeck.length === 0) {
         finishGame();
     } else {
-        // Continua o jogo com as próximas cartas
         setPlayerDeck(newPlayerDeck);
         setCpuDeck(newCpuDeck);
         setPlayerCard(newPlayerDeck[0]);
         setCpuCard(newCpuDeck[0]);
         
-        // Define turno baseado no vencedor da rodada anterior
         if (winner === 'PLAYER') setTurn('PLAYER');
         else if (winner === 'CPU') setTurn('CPU');
-        // Se empate, o turno continua com quem estava
         
         setSelectedStat(null);
         setRoundWinner(null);
@@ -559,10 +475,24 @@ const App: React.FC = () => {
             setMessage(`Rodada finalizada. Passe para ${winner === 'PLAYER' ? 'Jogador 1' : 'Jogador 2'}`);
         } else {
             setGameState(GameState.PLAYING);
-            // Notification message that will auto-dismiss
             setMessage(winner === 'PLAYER' ? "Você venceu! Sua vez." : "Oponente venceu! Vez dele.");
         }
     }
+  };
+
+  const saveHighScore = (name: string, score: number) => {
+    const newScore: HighScore = {
+      name,
+      roundsWon: score,
+      date: new Date().toLocaleDateString(),
+    };
+    
+    const updatedScores = [...highScores, newScore]
+      .sort((a, b) => b.roundsWon - a.roundsWon)
+      .slice(0, 5);
+
+    setHighScores(updatedScores);
+    localStorage.setItem('kpop_trunfo_ranking', JSON.stringify(updatedScores));
   };
 
   const finishGame = () => {
@@ -572,13 +502,10 @@ const App: React.FC = () => {
       let winnerName = "";
       let finalMessage = "";
 
-      // Decide vencedor por pontos
       if (scores.player > scores.cpu) {
            winnerName = gameMode === GameMode.SINGLE_PLAYER ? 'Você' : (isOnline ? 'Você' : 'Jogador 1');
            finalMessage = `${winnerName} venceu por pontos (${scores.player} x ${scores.cpu})!`;
-           if (gameMode === GameMode.SINGLE_PLAYER) {
-                saveHighScore('Jogador', scores.player);
-           }
+           if (gameMode === GameMode.SINGLE_PLAYER) saveHighScore('Jogador', scores.player);
       } else if (scores.cpu > scores.player) {
            winnerName = gameMode === GameMode.SINGLE_PLAYER ? 'CPU' : (isOnline ? 'Oponente' : 'Jogador 2');
            finalMessage = `${winnerName} venceu por pontos (${scores.cpu} x ${scores.player})!`;
@@ -587,9 +514,8 @@ const App: React.FC = () => {
       }
 
       setMessage(finalMessage);
-      
       if (isOnline) {
-         if (peerRef.current) peerRef.current.destroy(); // Close connection
+         if (peerRef.current) peerRef.current.destroy();
       }
   };
 
@@ -619,16 +545,8 @@ const App: React.FC = () => {
     }
   }, [turn, gameState, cpuCard, gameMode]);
 
-  // Handle Incoming Custom Messages with Card Data
-  const handleCustomNetworkMessage = (msg: any) => {
-     if (msg.type === 'MOVE') {
-         performMove(msg.stat, msg.card);
-     } else {
-         handleNetworkMessage(msg);
-     }
-  }
 
-  // --- SCREENS ---
+  // --- RENDERS ---
 
   if (gameState === GameState.START) {
     return (
@@ -675,95 +593,137 @@ const App: React.FC = () => {
                 </button>
             </div>
         </div>
-
-        {highScores.length > 0 && (
-            <div className="w-full max-w-xs glass-panel rounded-xl p-4 mb-4 flex-1 max-h-[150px] overflow-y-auto no-scrollbar">
-                <div className="flex items-center justify-center gap-2 mb-3 text-yellow-400 font-bold tracking-wider sticky top-0 bg-black/20 backdrop-blur-md py-1 rounded">
-                    <Trophy className="w-5 h-5" /> HALL DA FAMA
-                </div>
-                <div className="space-y-2">
-                    {highScores.map((score, idx) => (
-                        <div key={idx} className="flex justify-between text-sm text-white/80 border-b border-white/10 pb-1 last:border-0">
-                            <span>{idx + 1}. {score.name}</span>
-                            <span className="font-mono text-pink-300">{score.roundsWon} pts</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        )}
       </div>
     );
   }
 
-  // Lobby Screen
+  // --- NEW LOBBY SCREEN WITH VIRTUAL WAITING ROOM ---
   if (gameState === GameState.LOBBY) {
       return (
         <div className="h-[100dvh] flex flex-col items-center justify-center bg-gray-900 p-6 relative">
-            <button onClick={() => { setGameState(GameState.START); if (peerRef.current) peerRef.current.destroy(); }} className="absolute top-4 left-4 text-white/50 hover:text-white">
-                ← Voltar
+            <button onClick={() => { setGameState(GameState.START); if (peerRef.current) peerRef.current.destroy(); }} className="absolute top-4 left-4 text-white/50 hover:text-white flex items-center gap-2">
+                <XCircle className="w-6 h-6" /> Sair
             </button>
-            <div className="w-full max-w-md bg-gray-800/80 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl text-center">
-                <Globe className="w-16 h-16 mx-auto mb-4 text-emerald-400 animate-pulse" />
-                <h2 className="text-2xl font-bold text-white mb-6">Sala Online</h2>
-                
-                {connectionStatus === 'connecting' && <p className="text-yellow-400 animate-pulse">Conectando...</p>}
-                {connectionStatus === 'error' && <p className="text-red-400 mb-4">{message}</p>}
+            
+            <div className="w-full max-w-2xl bg-gray-800/80 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl text-center">
+                <h2 className="text-3xl font-bold text-white mb-2">Sala de Espera</h2>
+                <p className="text-gray-400 mb-8">{gameMode === GameMode.ONLINE_HOST ? 'Você é o Anfitrião' : 'Você é o Convidado'}</p>
 
-                {gameMode === GameMode.ONLINE_HOST && peerId && (
-                    <div className="space-y-6">
-                        <p className="text-gray-400 text-sm">Envie este código para seu amigo:</p>
-                        <div className="flex items-center gap-2 bg-black/50 p-4 rounded-xl border border-white/10 relative group">
-                            <code className="text-2xl font-mono text-emerald-400 tracking-wider flex-1">{peerId}</code>
-                            <button 
-                                onClick={() => {
-                                    navigator.clipboard.writeText(peerId);
-                                    setMessage("Código copiado!");
-                                }}
-                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                {/* --- VIRTUAL ROOM AVATARS --- */}
+                <div className="flex justify-center items-center gap-8 mb-8">
+                    
+                    {/* YOU */}
+                    <div className="flex flex-col items-center gap-3">
+                        <div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center relative bg-gray-700 ${isPlayerReady ? 'border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-blue-400'}`}>
+                            <User className="w-12 h-12 text-white" />
+                            {isPlayerReady && <div className="absolute -bottom-2 -right-2 bg-green-500 rounded-full p-1"><CheckCircle className="w-5 h-5 text-white" /></div>}
+                        </div>
+                        <span className="font-bold text-white">VOCÊ</span>
+                        <span className={`text-xs uppercase px-2 py-1 rounded ${isPlayerReady ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
+                            {isPlayerReady ? 'PRONTO' : 'AGUARDANDO'}
+                        </span>
+                    </div>
+
+                    <div className="flex flex-col items-center">
+                         <div className="h-[2px] w-10 bg-white/10"></div>
+                         <div className="p-2 bg-black/40 rounded-full border border-white/10 my-2">
+                            <span className="font-mono text-xs text-yellow-500">VS</span>
+                         </div>
+                         <div className="h-[2px] w-10 bg-white/10"></div>
+                    </div>
+
+                    {/* OPPONENT */}
+                    <div className="flex flex-col items-center gap-3">
+                        <div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center relative transition-all
+                            ${connectionStatus === 'connected' 
+                                ? (isOpponentReady ? 'border-green-500 bg-gray-700 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-red-400 bg-gray-700') 
+                                : 'border-white/10 border-dashed bg-transparent'}
+                        `}>
+                            {connectionStatus === 'connected' ? (
+                                <User className="w-12 h-12 text-white" />
+                            ) : (
+                                <Loader2 className="w-8 h-8 text-white/30 animate-spin" />
+                            )}
+                            {isOpponentReady && <div className="absolute -bottom-2 -right-2 bg-green-500 rounded-full p-1"><CheckCircle className="w-5 h-5 text-white" /></div>}
+                        </div>
+                        <span className="font-bold text-white">{connectionStatus === 'connected' ? 'OPONENTE' : '...'}</span>
+                         <span className={`text-xs uppercase px-2 py-1 rounded 
+                            ${connectionStatus !== 'connected' ? 'text-transparent' : 
+                              isOpponentReady ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
+                            {isOpponentReady ? 'PRONTO' : 'AGUARDANDO'}
+                        </span>
+                    </div>
+
+                </div>
+
+                {/* --- CONNECTION STATUS & CONTROLS --- */}
+                <div className="bg-black/30 rounded-xl p-4 border border-white/5">
+                    {connectionStatus === 'connecting' && <div className="flex items-center justify-center gap-2 text-yellow-400"><Loader2 className="animate-spin" /> Conectando...</div>}
+                    {connectionStatus === 'error' && <p className="text-red-400">{message}</p>}
+                    
+                    {/* HOST CONTROLS */}
+                    {gameMode === GameMode.ONLINE_HOST && (
+                        <>
+                            {connectionStatus === 'idle' && peerId && (
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-2 bg-black/50 p-4 rounded-xl border border-white/10 group">
+                                        <code className="text-2xl font-mono text-emerald-400 tracking-wider flex-1">{peerId}</code>
+                                        <button 
+                                            onClick={() => { navigator.clipboard.writeText(peerId); setMessage("Código copiado!"); }}
+                                            className="p-2 hover:bg-white/10 rounded-lg"
+                                        >
+                                            <Copy className="w-5 h-5 text-gray-400 group-hover:text-white" />
+                                        </button>
+                                    </div>
+                                    <p className="text-sm text-gray-400 animate-pulse">Compartilhe o código e aguarde o oponente...</p>
+                                </div>
+                            )}
+                        </>
+                    )}
+
+                    {/* GUEST CONTROLS */}
+                    {gameMode === GameMode.ONLINE_GUEST && connectionStatus === 'idle' && (
+                        <div className="space-y-4">
+                            <input 
+                                type="text" 
+                                value={joinId}
+                                onChange={(e) => setJoinId(e.target.value)}
+                                placeholder="Cole o código do anfitrião"
+                                className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-center text-white font-mono text-lg focus:outline-none focus:border-emerald-500"
+                            />
+                            <button
+                                onClick={connectToPeer}
+                                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2"
                             >
-                                <Copy className="w-5 h-5 text-gray-400 group-hover:text-white" />
+                                <Zap className="w-5 h-5" /> Entrar na Sala
                             </button>
                         </div>
-                        <div className="flex items-center justify-center gap-2 text-white/50 text-sm">
-                            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
-                            Aguardando oponente...
-                        </div>
-                    </div>
-                )}
+                    )}
 
-                {gameMode === GameMode.ONLINE_GUEST && (
-                     <div className="space-y-4">
-                        <p className="text-gray-400 text-sm">Cole o código do anfitrião:</p>
-                        <input 
-                            type="text" 
-                            value={joinId}
-                            onChange={(e) => setJoinId(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && joinId && connectionStatus !== 'connecting') {
-                                    SoundEffects.init();
-                                    connectToPeer();
-                                }
-                            }}
-                            placeholder={!peerId ? "Inicializando..." : "Ex: codigo-aqui"}
-                            disabled={!peerId || connectionStatus === 'connecting'}
-                            className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-center text-white font-mono text-lg focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
-                        />
-                        <button
-                            onClick={() => { SoundEffects.init(); connectToPeer(); }}
-                            disabled={!joinId || !peerId || connectionStatus === 'connecting'}
-                            className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
-                        >
-                            {connectionStatus === 'connecting' ? <RefreshCw className="animate-spin" /> : <CheckCircle />}
-                            {connectionStatus === 'connecting' ? 'Conectando...' : 'Entrar na Sala'}
-                        </button>
-                     </div>
-                )}
+                    {/* READY BUTTON (SHOWN WHEN CONNECTED) */}
+                    {connectionStatus === 'connected' && (
+                        <div className="mt-4 animate-slide-up">
+                            {!isPlayerReady ? (
+                                <button
+                                    onClick={handlePlayerReady}
+                                    className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xl rounded-xl shadow-lg transform hover:scale-[1.02] transition-all flex items-center justify-center gap-3"
+                                >
+                                    <CheckCircle className="w-6 h-6" /> ESTOU PRONTO!
+                                </button>
+                            ) : (
+                                <div className="p-4 bg-green-900/30 border border-green-500/30 rounded-xl text-green-400 font-bold animate-pulse">
+                                    {isOpponentReady ? 'Iniciando jogo...' : 'Aguardando oponente ficar pronto...'}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
       );
   }
 
-  // --- EXISTING SCREENS (GAME OVER / WAITING) ---
+  // --- GAME OVER / WAITING SCREENS ---
 
   if (gameState === GameState.GAME_OVER) {
     const isWin = scores.player > scores.cpu;
@@ -831,12 +791,10 @@ const App: React.FC = () => {
   const opponentVariant = isResult ? 'result' : (isOpponentMinimized ? 'minimized' : 'playing');
   const playerVariant = isResult ? 'result' : (isPlayerMinimized ? 'minimized' : 'playing');
 
-  // BOTÃO PRÓXIMA AGORA SEMPRE VISÍVEL NO RESULTADO
   const showNextButton = isResult; 
 
   return (
     <div className="h-[100dvh] bg-gray-900 flex flex-col overflow-hidden relative">
-      {/* HUD */}
       <div className="h-10 bg-black/80 backdrop-blur-md flex items-center justify-between px-3 border-b border-white/10 z-50 shrink-0 text-xs">
          <div className="flex gap-2 items-center text-blue-300 font-bold">
             <span className="bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center">{playerDeck.length}</span>
@@ -852,7 +810,6 @@ const App: React.FC = () => {
          </div>
       </div>
 
-       {/* MESSAGE NOTIFICATION - MOVED TO TOP */}
        <div className="absolute top-14 left-0 w-full pointer-events-none z-50 flex justify-center">
          {message && (
             <div className="animate-slide-down bg-black/90 backdrop-blur-xl px-6 py-2 rounded-full border border-white/20 shadow-2xl mx-4">
@@ -868,18 +825,16 @@ const App: React.FC = () => {
 
       <div className="flex-1 flex flex-col relative overflow-hidden bg-gray-950">
         
-        {/* Opponent Card Area (Top) */}
         <div className={`w-full transition-all duration-500 ease-in-out relative z-10 ${opponentHeightClass}`}>
             {cpuCard && (
                 <Card 
                     key={cpuCard.id}
                     data={cpuCard} 
-                    // In Online: Always hide opponent card until result, or if it's minimized
                     isHidden={(gameState === GameState.PLAYING) || (isOnline && gameState !== GameState.RESULT && !isOpponentMinimized)}
                     selectedStat={selectedStat}
                     isWinner={roundWinner === 'CPU'}
                     isLoser={roundWinner === 'PLAYER'}
-                    disabled={true} // Opponent card never clickable
+                    disabled={true} 
                     onSelectStat={() => {}} 
                     label={isOnline ? "Oponente" : (gameMode === GameMode.SINGLE_PLAYER ? "CPU" : "Jogador 2")}
                     variant={opponentVariant}
@@ -887,7 +842,6 @@ const App: React.FC = () => {
             )}
         </div>
 
-        {/* Divider / Action Button */}
         {showNextButton && (
              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 w-full flex justify-center pointer-events-auto">
                  <button 
@@ -899,7 +853,6 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* Player Card Area (Bottom) */}
         <div className={`w-full transition-all duration-500 ease-in-out relative z-20 ${playerHeightClass}`}>
             {playerCard && (
                 <Card 
@@ -908,7 +861,6 @@ const App: React.FC = () => {
                     isHidden={false} 
                     onSelectStat={onStatClick}
                     selectedStat={selectedStat}
-                    // Disable if not my turn or if showing result
                     disabled={gameState !== GameState.PLAYING || (isOnline && turn === 'CPU') || (!isOnline && turn === 'CPU')}
                     isWinner={roundWinner === 'PLAYER'}
                     isLoser={roundWinner === 'CPU'}
@@ -918,12 +870,6 @@ const App: React.FC = () => {
             )}
         </div>
         
-      </div>
-      
-      {/* Network Listener Injection */}
-      <div className="hidden">
-         {/* This is a hack to attach the listener to the peer connection since we are using refs.
-             The logic is actually inside useEffect/callbacks, so no UI needed here. */}
       </div>
     </div>
   );

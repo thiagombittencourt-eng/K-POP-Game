@@ -48,7 +48,8 @@ export const STAT_LABELS: Record<StatKey, string> = {
 
 // Tipos para comunicação P2P
 export type NetworkMessage = 
+  | { type: 'READY' }                        // Jogador sinaliza que está pronto
   | { type: 'START_GAME'; deck: CardData[] } // Host envia deck para Guest
-  | { type: 'MOVE'; stat: StatKey }          // Jogador ativo envia o atributo escolhido
+  | { type: 'MOVE'; stat: StatKey; card?: CardData } // Jogador ativo envia o atributo escolhido (card opcional para visualização)
   | { type: 'NEXT_ROUND' }                   // Sincroniza o botão "Próxima"
   | { type: 'RESTART' };                     // Reiniciar jogo
