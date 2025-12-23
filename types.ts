@@ -53,4 +53,15 @@ export type NetworkMessage =
   | { type: 'GUEST_MOVE'; stat: StatKey } // Convidado solicita movimento
   | { type: 'ROUND_RESULT'; stat: StatKey; winner: 'PLAYER' | 'CPU' | 'DRAW'; hostCard: CardData; guestCard: CardData } // Host envia resultado final
   | { type: 'NEXT_ROUND' }                   
-  | { type: 'RESTART' };                     
+  | { type: 'RESTART' };
+
+// --- NEW: PROGRESSION SYSTEM ---
+export type CardSkinType = 'default' | 'holo' | 'gold';
+
+export interface UserProfile {
+  level: number;
+  currentXp: number;
+  nextLevelXp: number;
+  unlockedSkins: CardSkinType[];
+  selectedSkin: CardSkinType;
+}
