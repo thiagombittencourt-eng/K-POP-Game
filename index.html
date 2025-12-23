@@ -83,9 +83,31 @@
         100% { height: 10%; }
       }
 
+      /* --- IMPACT EFFECTS --- */
+      @keyframes shake {
+        0% { transform: translate(1px, 1px) rotate(0deg); }
+        10% { transform: translate(-1px, -2px) rotate(-1deg); }
+        20% { transform: translate(-3px, 0px) rotate(1deg); }
+        30% { transform: translate(3px, 2px) rotate(0deg); }
+        40% { transform: translate(1px, -1px) rotate(1deg); }
+        50% { transform: translate(-1px, 2px) rotate(-1deg); }
+        60% { transform: translate(-3px, 1px) rotate(0deg); }
+        70% { transform: translate(3px, 1px) rotate(-1deg); }
+        80% { transform: translate(-1px, -1px) rotate(1deg); }
+        90% { transform: translate(1px, 2px) rotate(0deg); }
+        100% { transform: translate(1px, -2px) rotate(-1deg); }
+      }
+
+      @keyframes flash {
+        0% { opacity: 0.8; }
+        100% { opacity: 0; }
+      }
+
       .animate-spotlight-l { animation: spotlight-swing-left 4s ease-in-out infinite alternate; transform-origin: top center; }
       .animate-spotlight-r { animation: spotlight-swing-right 4s ease-in-out infinite alternate; transform-origin: top center; }
       .animate-dance { animation: dance-bounce 0.8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+      .animate-flash { animation: flash 0.5s ease-out forwards; pointer-events: none; }
       
       .shadow-dancer {
         filter: blur(2px) contrast(200%);
@@ -105,7 +127,8 @@
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "peerjs": "https://esm.sh/peerjs@1.5.4?bundle-deps"
+    "peerjs": "https://esm.sh/peerjs@1.5.4?bundle-deps",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@1.9.2"
   }
 }
 </script>

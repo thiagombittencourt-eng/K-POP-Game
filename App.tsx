@@ -5,6 +5,7 @@ import { Card } from './components/Card';
 import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap, Music, Star, Volume2, VolumeX, Layers, Palette, Sparkles, Crown } from 'lucide-react';
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
+import confetti from 'canvas-confetti';
 
 // --- SOUND MANAGER (Web Audio API for SFX) ---
 const SoundEffects = {
@@ -22,7 +23,7 @@ const SoundEffects = {
     }
   },
 
-  play: (type: 'select' | 'win' | 'lose' | 'draw' | 'gameover' | 'start' | 'ready' | 'levelup') => {
+  play: (type: 'select' | 'win' | 'lose' | 'draw' | 'gameover' | 'start' | 'ready' | 'levelup' | 'clash') => {
     if (!SoundEffects.ctx) SoundEffects.init();
     const ctx = SoundEffects.ctx;
     if (!ctx) return;
@@ -39,6 +40,12 @@ const SoundEffects = {
         osc.type = 'sine'; osc.frequency.setValueAtTime(800, t); osc.frequency.exponentialRampToValueAtTime(1200, t + 0.1);
         gain.gain.setValueAtTime(0.05, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
         osc.start(t); osc.stop(t + 0.1); break;
+      case 'clash':
+        // Impact sound (low thud + white noise burst)
+        osc.type = 'square'; osc.frequency.setValueAtTime(150, t); osc.frequency.exponentialRampToValueAtTime(50, t + 0.2);
+        gain.gain.setValueAtTime(0.2, t); gain.gain.linearRampToValueAtTime(0, t + 0.2);
+        osc.start(t); osc.stop(t + 0.2);
+        break;
       case 'ready':
         osc.type = 'square'; osc.frequency.setValueAtTime(400, t); osc.frequency.linearRampToValueAtTime(800, t + 0.1);
         gain.gain.setValueAtTime(0.05, t); gain.gain.linearRampToValueAtTime(0, t + 0.3);
@@ -66,7 +73,6 @@ const SoundEffects = {
         gain.gain.setValueAtTime(0.1, t); gain.gain.linearRampToValueAtTime(0, t+0.2);
         osc.start(t); osc.stop(t + 0.2); break;
       case 'levelup':
-        // Arpeggio
         [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
             const lOsc = ctx.createOscillator(); const lGain = ctx.createGain();
             lOsc.connect(lGain); lGain.connect(ctx.destination);
@@ -143,6 +149,10 @@ const App: React.FC = () => {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [isOpponentReady, setIsOpponentReady] = useState(false);
 
+  // -- Visual Effects State --
+  const [isShaking, setIsShaking] = useState(false);
+  const [showFlash, setShowFlash] = useState(false);
+
   // -- Music State --
   const [isMusicOn, setIsMusicOn] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -211,6 +221,7 @@ const App: React.FC = () => {
           if (leveledUp) {
               SoundEffects.play('levelup');
               setMessage(`LEVEL UP! Você alcançou o nível ${newLevel}!`);
+              confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
           }
 
           return {
@@ -313,11 +324,40 @@ const App: React.FC = () => {
       sendMessage({ type: 'ROUND_RESULT', stat, winner, hostCard, guestCard });
   };
 
+  const triggerVisualEffects = (winnerRole: 'PLAYER' | 'CPU' | 'DRAW') => {
+      // 1. Shake Screen
+      setIsShaking(true);
+      setTimeout(() => setIsShaking(false), 500);
+
+      // 2. Flash Screen
+      setShowFlash(true);
+      setTimeout(() => setShowFlash(false), 500);
+
+      // 3. Play Clash Sound
+      SoundEffects.play('clash');
+
+      // 4. Confetti on Win
+      const isPlayerWin = (gameMode === GameMode.ONLINE_GUEST && winnerRole === 'CPU') || // Guest sees CPU win as Host win? Wait.
+                          (gameMode !== GameMode.ONLINE_GUEST && winnerRole === 'PLAYER') ||
+                          (gameMode === GameMode.ONLINE_GUEST && winnerRole === 'PLAYER'); // Guest perspective: PLAYER is Guest.
+
+      // Simplification: winnerRole is strictly 'PLAYER' (the person running the code) or 'CPU' (the opponent) in local context
+      // EXCEPT in the applyRoundResult logic which is a bit mixed for Online.
+      // Let's rely on the message setting logic below which already deduces local winner.
+  }
+
   const applyRoundResult = (winnerRole: 'PLAYER' | 'CPU' | 'DRAW', stat: StatKey, hostCardData: CardData, guestCardData: CardData) => {
       setSelectedStat(stat); setGameState(GameState.RESULT); setIsProcessingMove(false);
+      
+      triggerVisualEffects(winnerRole);
+
       if (gameMode === GameMode.ONLINE_HOST) {
           setPlayerCard(hostCardData); setCpuCard(guestCardData); setRoundWinner(winnerRole);
-          if (winnerRole === 'PLAYER') { setMessage("Você venceu a rodada!"); SoundEffects.play('win'); }
+          if (winnerRole === 'PLAYER') { 
+              setMessage("Você venceu a rodada!"); 
+              SoundEffects.play('win');
+              confetti({ particleCount: 100, spread: 70, origin: { y: 0.8 }, colors: ['#4ade80', '#22d3ee'] });
+          }
           else if (winnerRole === 'CPU') { setMessage("Oponente venceu a rodada!"); SoundEffects.play('lose'); }
           else { setMessage("Empate!"); SoundEffects.play('draw'); }
       } else {
@@ -325,7 +365,11 @@ const App: React.FC = () => {
           let localWinner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
           if (winnerRole === 'PLAYER') localWinner = 'CPU'; else if (winnerRole === 'CPU') localWinner = 'PLAYER';
           setRoundWinner(localWinner);
-          if (localWinner === 'PLAYER') { setMessage("Você venceu a rodada!"); SoundEffects.play('win'); }
+          if (localWinner === 'PLAYER') { 
+              setMessage("Você venceu a rodada!"); 
+              SoundEffects.play('win'); 
+              confetti({ particleCount: 100, spread: 70, origin: { y: 0.8 }, colors: ['#4ade80', '#22d3ee'] });
+          }
           else if (localWinner === 'CPU') { setMessage("Oponente venceu a rodada!"); SoundEffects.play('lose'); }
           else { setMessage("Empate!"); SoundEffects.play('draw'); }
       }
@@ -347,6 +391,12 @@ const App: React.FC = () => {
   
   const performMoveLegacy = (stat: StatKey) => {
     setSelectedStat(stat); setGameState(GameState.RESULT);
+    
+    // Trigger Effects
+    setIsShaking(true); setTimeout(() => setIsShaking(false), 500);
+    setShowFlash(true); setTimeout(() => setShowFlash(false), 500);
+    SoundEffects.play('clash');
+
     const pVal = playerCard!.stats[stat]; const cVal = cpuCard!.stats[stat];
     let winner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
     if (stat === 'debutYear') { if (pVal < cVal) winner = 'PLAYER'; else if (pVal > cVal) winner = 'CPU'; }
@@ -354,7 +404,11 @@ const App: React.FC = () => {
     if (pVal === cVal) winner = 'DRAW';
     
     if (winner === 'DRAW') { setMessage("Empate!"); SoundEffects.play('draw'); }
-    else if (winner === 'PLAYER') { SoundEffects.play('win'); setMessage("Você venceu a rodada!"); }
+    else if (winner === 'PLAYER') { 
+        SoundEffects.play('win'); 
+        setMessage("Você venceu a rodada!");
+        confetti({ particleCount: 100, spread: 70, origin: { y: 0.8 }, colors: ['#4ade80', '#22d3ee'] });
+    }
     else { SoundEffects.play('lose'); setMessage("Oponente venceu a rodada!"); }
     setRoundWinner(winner);
   }
@@ -404,6 +458,31 @@ const App: React.FC = () => {
       SoundEffects.play('gameover');
       setGameState(GameState.GAME_OVER);
       
+      if (playerWon) {
+          // BIG EXPLOSION
+          const duration = 3000;
+          const end = Date.now() + duration;
+
+          (function frame() {
+            confetti({
+              particleCount: 7,
+              angle: 60,
+              spread: 55,
+              origin: { x: 0 }
+            });
+            confetti({
+              particleCount: 7,
+              angle: 120,
+              spread: 55,
+              origin: { x: 1 }
+            });
+
+            if (Date.now() < end) {
+              requestAnimationFrame(frame);
+            }
+          }());
+      }
+
       // XP Logic
       if (gameMode !== GameMode.TWO_PLAYERS) { // Only award XP in Single or Online
           const xpGained = playerWon ? XP_PER_WIN : XP_PER_LOSS;
@@ -694,7 +773,11 @@ const App: React.FC = () => {
   const playerVariant = isResult ? 'result' : 'playing';
 
   return (
-    <div className="h-[100dvh] bg-gray-900 flex flex-col overflow-hidden relative">
+    <div className={`h-[100dvh] bg-gray-900 flex flex-col overflow-hidden relative ${isShaking ? 'animate-shake' : ''}`}>
+      
+      {/* FLASH OVERLAY */}
+      {showFlash && <div className="absolute inset-0 z-[100] bg-white animate-flash pointer-events-none"></div>}
+
       <div className="absolute top-0 left-0 w-full z-50 p-3 flex justify-between items-start pointer-events-none">
           <div className={`pointer-events-auto flex flex-col items-center bg-gray-900/80 backdrop-blur-xl border-2 rounded-2xl p-2 min-w-[90px] transition-all duration-300 shadow-xl ${turn === 'PLAYER' && gameState === GameState.PLAYING ? 'border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.5)] scale-105' : 'border-white/10 opacity-90'}`}>
               <div className="flex items-center gap-1.5 mb-1"><div className="bg-cyan-600 p-1 rounded-md"><User className="w-3 h-3 text-white" /></div><span className="font-bold text-white text-[10px] uppercase tracking-wider">{isOnline ? 'VOCÊ' : 'P1'}</span></div>

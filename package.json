@@ -12,7 +12,8 @@
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "peerjs": "1.5.4"
+    "peerjs": "1.5.4",
+    "canvas-confetti": "1.9.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
