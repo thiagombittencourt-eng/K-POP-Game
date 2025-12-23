@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_DECK } from './data/groups';
 import { CardData, GameState, StatKey, GameMode, HighScore, NetworkMessage } from './types';
 import { Card } from './components/Card';
-import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap, Music, Star } from 'lucide-react';
-import Peer, { DataConnection } from 'peerjs';
+import { Trophy, RefreshCw, Users, Play, Smartphone, User, ArrowRight, Wifi, Copy, CheckCircle, Globe, LogIn, Loader2, XCircle, Zap, Music, Star, Volume2, VolumeX } from 'lucide-react';
+import Peer from 'peerjs';
+import type { DataConnection } from 'peerjs';
 
-// --- SOUND MANAGER (Web Audio API) ---
+// --- SOUND MANAGER (Web Audio API for SFX) ---
 const SoundEffects = {
   ctx: null as AudioContext | null,
 
@@ -22,6 +23,7 @@ const SoundEffects = {
   },
 
   play: (type: 'select' | 'win' | 'lose' | 'draw' | 'gameover' | 'start' | 'ready') => {
+    // Try to init if missing
     if (!SoundEffects.ctx) SoundEffects.init();
     const ctx = SoundEffects.ctx;
     if (!ctx) return;
@@ -113,6 +115,11 @@ const DUMMY_CARD: CardData = {
     stats: { members: 0, albums: 0, debutYear: 0, fame: 0, awards: 0 }
 };
 
+// Primary: CodeSkulptor Demo (MP3)
+const BG_MUSIC_URL = "https://codeskulptor-demos.commondatastorage.googleapis.com/GalaxyInvaders/theme_01.mp3"; 
+// Fallback: Google Actions Sci-Fi Underscore (OGG) - Highly Reliable
+const FALLBACK_MUSIC_URL = "https://actions.google.com/sounds/v1/science_fiction/science_fiction_music_underscore.ogg";
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.START);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.SINGLE_PLAYER);
@@ -124,8 +131,6 @@ const App: React.FC = () => {
   const [cpuCard, setCpuCard] = useState<CardData | null>(null);
   
   // Turn: 'PLAYER' means ME (Local User), 'CPU' means OPPONENT (or AI).
-  // In Online Host mode: PLAYER = Host, CPU = Guest
-  // In Online Guest mode: PLAYER = Guest, CPU = Host
   const [turn, setTurn] = useState<'PLAYER' | 'CPU'>('PLAYER');
   
   const [selectedStat, setSelectedStat] = useState<StatKey | null>(null);
@@ -145,6 +150,10 @@ const App: React.FC = () => {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [isOpponentReady, setIsOpponentReady] = useState(false);
 
+  // -- Music State --
+  const [isMusicOn, setIsMusicOn] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -158,11 +167,75 @@ const App: React.FC = () => {
     if (saved) {
       setHighScores(JSON.parse(saved));
     }
+    
+    // Initialize Music Object once
+    if (!audioRef.current) {
+        const audio = new Audio(BG_MUSIC_URL);
+        audio.loop = true;
+        audio.volume = 0.4; 
+        // NOTE: crossOrigin removed to avoid CORS "no supported sources" errors on certain CDNs
+        audio.preload = 'auto'; 
+        
+        audio.addEventListener('canplaythrough', () => {
+             console.log("Audio loaded and ready.");
+        }, { once: true });
+
+        // Robust Error Handling with Fallback
+        audio.onerror = (e) => {
+            console.warn("Audio load error event:", e);
+            if (audio.src === BG_MUSIC_URL) {
+                console.log("Attempting fallback music source...");
+                audio.src = FALLBACK_MUSIC_URL;
+                audio.load();
+                // If it was supposed to be playing, try playing again
+                if (isMusicOn) {
+                    audio.play().catch(err => console.error("Fallback play failed", err));
+                }
+            }
+        };
+
+        audioRef.current = audio;
+    }
+
     return () => {
       if (peerRef.current) peerRef.current.destroy();
       if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+      if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+      }
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleMusic = () => {
+      // 1. Init SFX Context
+      SoundEffects.init();
+
+      // 2. Handle Background Music
+      if (!audioRef.current) return;
+
+      if (isMusicOn) {
+          // If it's on, pause it
+          audioRef.current.pause();
+          setIsMusicOn(false);
+      } else {
+          // If it's off, play it (DIRECTLY inside the click event)
+          const playPromise = audioRef.current.play();
+          
+          if (playPromise !== undefined) {
+            playPromise
+                .then(() => {
+                    setIsMusicOn(true);
+                })
+                .catch(error => {
+                    console.error("Music Playback Error:", error);
+                    setIsMusicOn(false); 
+                    // Optional: Don't show alert to user to avoid annoyance, just log it.
+                    // If strictly needed: setMessage("Erro ao reproduzir áudio.");
+                });
+          }
+      }
+  };
 
   // Notificação com auto-dismiss
   useEffect(() => {
@@ -174,10 +247,8 @@ const App: React.FC = () => {
     }
   }, [message, gameState]);
 
-  // Check for Ready Start (Host Side mostly) - But now triggered via message
+  // Check for Ready Start (Host Side mostly)
   useEffect(() => { 
-      // HOST ONLY: Check if both ready to start game via side-effects if needed, 
-      // but we handle it in network message 'READY' for host
       if (gameMode === GameMode.ONLINE_HOST && isPlayerReady && isOpponentReady && gameState === GameState.LOBBY) {
           startOnlineGameLogic();
       }
@@ -194,42 +265,48 @@ const App: React.FC = () => {
     setIsPlayerReady(false);
     setIsOpponentReady(false);
     
-    const peer = new Peer({
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-        ],
-      },
-      debug: 1
-    });
-    
-    peerRef.current = peer;
+    try {
+        const peer = new Peer({
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+            ],
+          },
+          debug: 1
+        });
+        
+        peerRef.current = peer;
 
-    peer.on('open', (id) => {
-      setPeerId(id);
-      setConnectionStatus('idle');
-      if (isHost) {
-        setMessage("Aguardando oponente entrar na sala...");
-      } else {
-        setMessage("Insira o código da sala.");
-      }
-    });
+        peer.on('open', (id) => {
+          setPeerId(id);
+          setConnectionStatus('idle');
+          if (isHost) {
+            setMessage("Aguardando oponente entrar na sala...");
+          } else {
+            setMessage("Insira o código da sala.");
+          }
+        });
 
-    peer.on('connection', (conn) => {
-      handleConnection(conn);
-    });
+        peer.on('connection', (conn) => {
+          handleConnection(conn);
+        });
 
-    peer.on('error', (err: any) => {
-      console.warn('PeerJS Error:', err);
-      if (err.type === 'peer-unavailable') {
-          setConnectionStatus('idle'); 
-          setMessage("Sala não encontrada. Verifique o código.");
-      } else {
-          setConnectionStatus('error');
-          setMessage("Erro de conexão. Tente recarregar.");
-      }
-    });
+        peer.on('error', (err: any) => {
+          console.warn('PeerJS Error:', err);
+          if (err.type === 'peer-unavailable') {
+              setConnectionStatus('idle'); 
+              setMessage("Sala não encontrada. Verifique o código.");
+          } else {
+              setConnectionStatus('error');
+              setMessage("Erro de conexão. Tente recarregar.");
+          }
+        });
+    } catch (e) {
+        console.error("PeerJS initialization failed", e);
+        setMessage("Erro ao iniciar modo online.");
+        setConnectionStatus('error');
+    }
   };
 
   const connectToPeer = () => {
@@ -265,7 +342,6 @@ const App: React.FC = () => {
     });
 
     conn.on('data', (data: unknown) => {
-      // Use Ref to call the latest version of handler (prevents stale state)
       handleNetworkMessageRef.current(data as NetworkMessage);
     });
 
@@ -307,7 +383,7 @@ const App: React.FC = () => {
     setCpuDeck(cDeck); // Host keeps Guest's deck to calculate results
     setPlayerCard(pDeck[0]);
     setCpuCard(cDeck[0]);
-    setScores({ player: 0, cpu: 0 });
+    setScores({ player: pDeck.length, cpu: cDeck.length });
     setTurn('PLAYER'); // Host starts
 
     // Send Guest their deck
@@ -323,7 +399,6 @@ const App: React.FC = () => {
     }
   };
 
-  // The actual handler function that uses current state
   const handleNetworkMessage = (msg: NetworkMessage) => {
     switch (msg.type) {
       case 'READY':
@@ -332,16 +407,16 @@ const App: React.FC = () => {
         break;
 
       case 'START_GAME':
-        // GUEST ONLY: Receives deck from Host
+        // GUEST ONLY
         const myDeck = msg.deck;
         const dummyHostDeck = Array(32 - myDeck.length).fill(DUMMY_CARD);
         
         setPlayerDeck(myDeck);
-        setCpuDeck(dummyHostDeck); // Guest only has dummy host deck
+        setCpuDeck(dummyHostDeck);
         setPlayerCard(myDeck[0]);
         setCpuCard(dummyHostDeck[0]); 
         
-        setScores({ player: 0, cpu: 0 });
+        setScores({ player: myDeck.length, cpu: dummyHostDeck.length });
         setTurn('CPU'); // Host starts (CPU for Guest)
         setGameState(GameState.PLAYING);
         setMessage("Jogo iniciado! Vez do Host.");
@@ -349,14 +424,14 @@ const App: React.FC = () => {
         break;
 
       case 'GUEST_MOVE':
-        // HOST ONLY: Guest sent a move. Host calculates result.
+        // HOST ONLY
         if (gameMode === GameMode.ONLINE_HOST) {
            calculateAndBroadcastResult(msg.stat);
         }
         break;
 
       case 'ROUND_RESULT':
-        // BOTH RECEIVE (Guest handles ui, Host ignores if it sent it, but good for sync)
+        // BOTH RECEIVE
         if (gameMode === GameMode.ONLINE_GUEST) {
            applyRoundResult(msg.winner, msg.stat, msg.hostCard, msg.guestCard);
         }
@@ -367,7 +442,6 @@ const App: React.FC = () => {
         break;
         
       case 'RESTART':
-        // HOST recebe pedido de reinício do GUEST
         if (gameMode === GameMode.ONLINE_HOST) {
              setMessage("Oponente pediu revanche! Reiniciando...");
              setTimeout(() => {
@@ -378,7 +452,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Keep ref updated
   useEffect(() => {
     handleNetworkMessageRef.current = handleNetworkMessage;
   });
@@ -386,7 +459,7 @@ const App: React.FC = () => {
   // --- GAME LOGIC ---
 
   const calculateAndBroadcastResult = (stat: StatKey) => {
-      // Logic runs ONLY on HOST
+      // HOST LOGIC
       const hostCard = playerCard;
       const guestCard = cpuCard;
       
@@ -421,7 +494,7 @@ const App: React.FC = () => {
   };
 
   const applyRoundResult = (
-      winnerRole: 'PLAYER' | 'CPU' | 'DRAW', // PLAYER=HOST, CPU=GUEST
+      winnerRole: 'PLAYER' | 'CPU' | 'DRAW', 
       stat: StatKey, 
       hostCardData: CardData, 
       guestCardData: CardData
@@ -436,11 +509,9 @@ const App: React.FC = () => {
           setRoundWinner(winnerRole);
           
           if (winnerRole === 'PLAYER') {
-             setScores(prev => ({ ...prev, player: prev.player + 1 }));
              setMessage("Você venceu a rodada!");
              SoundEffects.play('win');
           } else if (winnerRole === 'CPU') {
-             setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
              setMessage("Oponente venceu a rodada!");
              SoundEffects.play('lose');
           } else {
@@ -449,9 +520,8 @@ const App: React.FC = () => {
           }
 
       } else if (gameMode === GameMode.ONLINE_GUEST) {
-          // Guest: playerCard is Guest, cpuCard is Host
-          setPlayerCard(guestCardData); // My card (verified)
-          setCpuCard(hostCardData);     // Host card (revealed)
+          setPlayerCard(guestCardData); 
+          setCpuCard(hostCardData);     
 
           let localWinner: 'PLAYER' | 'CPU' | 'DRAW' = 'DRAW';
           if (winnerRole === 'PLAYER') localWinner = 'CPU'; // Host won
@@ -461,11 +531,9 @@ const App: React.FC = () => {
           setRoundWinner(localWinner);
 
           if (localWinner === 'PLAYER') {
-              setScores(prev => ({ ...prev, player: prev.player + 1 }));
               setMessage("Você venceu a rodada!");
               SoundEffects.play('win');
           } else if (localWinner === 'CPU') {
-              setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
               setMessage("Oponente venceu a rodada!");
               SoundEffects.play('lose');
           } else {
@@ -496,7 +564,7 @@ const App: React.FC = () => {
     setGameMode(mode);
     setPlayerDeck(pDeck);
     setCpuDeck(cDeck);
-    setScores({ player: 0, cpu: 0 });
+    setScores({ player: pDeck.length, cpu: cDeck.length });
     setPlayerCard(pDeck[0]);
     setCpuCard(cDeck[0]);
     setTurn('PLAYER');
@@ -506,7 +574,6 @@ const App: React.FC = () => {
     setRoundWinner(null);
   };
   
-  // Legacy function for offline modes
   const performMoveLegacy = (stat: StatKey) => {
     setSelectedStat(stat);
     setGameState(GameState.RESULT);
@@ -527,39 +594,32 @@ const App: React.FC = () => {
     }
 
     if (winner === 'DRAW') {
-      winner = turn; 
-      setMessage("Empate! Vantagem de quem escolheu.");
+      // Draw Logic: usually advantage to player who chose, or strict draw.
+      // We'll treat as strict draw for visual, but turn stays.
+      winner = 'DRAW';
+      setMessage("Empate!");
       SoundEffects.play('draw');
     } else if (winner === 'PLAYER') {
       SoundEffects.play('win');
+      setMessage("Você venceu a rodada!");
     } else {
       SoundEffects.play('lose');
+      setMessage("Oponente venceu a rodada!");
     }
 
     setRoundWinner(winner);
-    
-    if (winner === 'PLAYER') setScores(prev => ({ ...prev, player: prev.player + 1 }));
-    if (winner === 'CPU') setScores(prev => ({ ...prev, cpu: prev.cpu + 1 }));
-
-    const winnerName = winner === 'PLAYER' ? 'Você' : 'Oponente';
-    const msg = winner === 'DRAW' ? 'Empate!' : `${winnerName} venceu a rodada!`;
-    setMessage(msg);
   }
 
   const onStatClick = (stat: StatKey) => {
       SoundEffects.play('select');
       
       if (isOnline) {
-          // If it's not my turn, ignore
           if (turn === 'CPU') return;
-          
           setIsProcessingMove(true);
           
           if (gameMode === GameMode.ONLINE_HOST) {
-              // Host plays directly
               calculateAndBroadcastResult(stat);
           } else {
-              // Guest requests move
               sendMessage({ type: 'GUEST_MOVE', stat });
               setMessage("Aguardando resultado...");
           }
@@ -568,6 +628,7 @@ const App: React.FC = () => {
       }
   }
 
+  // --- UPDATED RESOLVE ROUND LOGIC (SUPER TRUNFO RULES: WINNER TAKES ALL) ---
   const resolveRound = (winner: 'PLAYER' | 'CPU' | 'DRAW', fromNetwork = false) => {
     if (!playerCard || !cpuCard) return;
     
@@ -577,45 +638,79 @@ const App: React.FC = () => {
         sendMessage({ type: 'NEXT_ROUND' });
     }
 
-    const newPlayerDeck = [...playerDeck];
-    const newCpuDeck = [...cpuDeck]; 
-    newPlayerDeck.shift();
-    newCpuDeck.shift();
+    const currentPDeck = [...playerDeck];
+    const currentCDeck = [...cpuDeck];
+    
+    // 1. Remove played cards from top
+    const pCard = currentPDeck.shift(); // The card just played
+    const cCard = currentCDeck.shift(); // The opponent's card just played
 
-    if (newPlayerDeck.length === 0) {
-        finishGame();
+    if (!pCard || !cCard) return; // Safety
+
+    // 2. Add cards to winner's deck (at bottom)
+    if (winner === 'PLAYER') {
+        currentPDeck.push(pCard, cCard);
+        setTurn('PLAYER'); // Winner plays
+    } else if (winner === 'CPU') {
+        currentCDeck.push(cCard, pCard);
+        setTurn('CPU'); // Winner plays
     } else {
-        setPlayerDeck(newPlayerDeck);
-        setCpuDeck(newCpuDeck);
-        setPlayerCard(newPlayerDeck[0]);
-        setCpuCard(newCpuDeck[0]);
-        
-        // Determine Turn
-        let nextTurn: 'PLAYER' | 'CPU' = turn; // Default keep turn on draw
-        if (winner === 'PLAYER') nextTurn = 'PLAYER';
-        else if (winner === 'CPU') nextTurn = 'CPU';
-        
-        setTurn(nextTurn);
-        
-        setSelectedStat(null);
-        setRoundWinner(null);
+        // DRAW: Both keep their cards (put at bottom)
+        // Alternative rule: they go to a temporary pot. 
+        // Simple rule: Return to owner's bottom.
+        currentPDeck.push(pCard);
+        currentCDeck.push(cCard);
+        // Turn keeps with who selected (or swap? let's keep turn)
+    }
 
-        if (gameMode === GameMode.TWO_PLAYERS) {
-            setGameState(GameState.WAITING_NEXT_TURN);
-            setMessage(`Rodada finalizada. Passe para ${winner === 'PLAYER' ? 'Jogador 1' : 'Jogador 2'}`);
+    // 3. Update scores (Deck size)
+    setScores({ player: currentPDeck.length, cpu: currentCDeck.length });
+
+    // 4. Check Victory Condition (Empty Deck)
+    if (currentPDeck.length === 0) {
+        setCpuDeck(currentCDeck);
+        setPlayerDeck(currentPDeck);
+        finishGame(false); // Player Lost
+        return;
+    } 
+    if (currentCDeck.length === 0) {
+        setCpuDeck(currentCDeck);
+        setPlayerDeck(currentPDeck);
+        finishGame(true); // Player Won
+        return;
+    }
+
+    // 5. Proceed to next round
+    setPlayerDeck(currentPDeck);
+    setCpuDeck(currentCDeck);
+    setPlayerCard(currentPDeck[0]);
+    setCpuCard(currentCDeck[0]);
+    
+    setSelectedStat(null);
+    setRoundWinner(null);
+
+    if (gameMode === GameMode.TWO_PLAYERS) {
+        setGameState(GameState.WAITING_NEXT_TURN);
+        const winnerName = winner === 'PLAYER' ? 'Jogador 1' : 'Jogador 2';
+        const drawText = winner === 'DRAW' ? 'Empate' : `${winnerName} venceu`;
+        setMessage(`${drawText}. Passe o aparelho para o próximo.`);
+    } else {
+        setGameState(GameState.PLAYING);
+        // Update Message based on Turn
+        if (winner === 'PLAYER' || (winner === 'DRAW' && turn === 'PLAYER')) {
+             setMessage("Sua vez! Escolha um atributo.");
         } else {
-            setGameState(GameState.PLAYING);
-            // Dynamic message based on who is playing
-            if (nextTurn === 'PLAYER') setMessage("Sua vez! Escolha um atributo.");
-            else setMessage("Vez do Oponente...");
+             setMessage("Vez do Oponente...");
         }
     }
   };
 
   const saveHighScore = (name: string, score: number) => {
+    // Score in Super Trunfo can be total cards or just a win record
+    // We'll save just the win.
     const newScore: HighScore = {
       name,
-      roundsWon: score,
+      roundsWon: score, // Saving cards count or just 1 for win? Saving Deck Size (usually 32)
       date: new Date().toLocaleDateString(),
     };
     
@@ -627,49 +722,51 @@ const App: React.FC = () => {
     localStorage.setItem('kpop_trunfo_ranking', JSON.stringify(updatedScores));
   };
 
-  const finishGame = () => {
+  const finishGame = (playerWon: boolean) => {
       SoundEffects.play('gameover');
       setGameState(GameState.GAME_OVER);
       
       let winnerName = "";
       let finalMessage = "";
 
-      if (scores.player > scores.cpu) {
+      if (playerWon) {
            winnerName = gameMode === GameMode.SINGLE_PLAYER ? 'Você' : (isOnline ? 'Você' : 'Jogador 1');
-           finalMessage = `${winnerName} venceu por pontos (${scores.player} x ${scores.cpu})!`;
-           if (gameMode === GameMode.SINGLE_PLAYER) saveHighScore('Jogador', scores.player);
-      } else if (scores.cpu > scores.player) {
-           winnerName = gameMode === GameMode.SINGLE_PLAYER ? 'CPU' : (isOnline ? 'Oponente' : 'Jogador 2');
-           finalMessage = `${winnerName} venceu por pontos (${scores.cpu} x ${scores.player})!`;
+           finalMessage = `Parabéns! ${winnerName} conquistou todas as cartas!`;
+           if (gameMode === GameMode.SINGLE_PLAYER) saveHighScore('Jogador', 32);
       } else {
-           finalMessage = `Empate no placar final! (${scores.player} x ${scores.cpu})`;
+           winnerName = gameMode === GameMode.SINGLE_PLAYER ? 'CPU' : (isOnline ? 'Oponente' : 'Jogador 2');
+           finalMessage = `Fim de jogo! ${winnerName} conquistou todas as cartas.`;
       }
 
       setMessage(finalMessage);
-      if (isOnline) {
-         // Don't destroy connection immediately anymore to allow restart
-         // if (peerRef.current) peerRef.current.destroy(); 
-      }
   };
 
   // CPU AI (Only for Single Player)
   useEffect(() => {
     if (gameMode === GameMode.SINGLE_PLAYER && turn === 'CPU' && gameState === GameState.PLAYING && cpuCard) {
-        setMessage("CPU está analisando...");
+        setMessage("CPU está escolhendo...");
         const timer = setTimeout(() => {
             const stats = cpuCard.stats;
             const keys = Object.keys(stats) as StatKey[];
+            // Simple AI: pick best relative stat
             let bestStat: StatKey = 'members';
-            let bestScore = -1;
+            let bestScore = -Infinity;
+            
             keys.forEach(key => {
                 let score = 0;
                 const val = stats[key];
-                if (key === 'fame') score = val / 40;
-                else if (key === 'debutYear') score = (2025 - val) / 20; 
-                else if (key === 'members') score = val / 13;
-                else if (key === 'albums') score = val / 10;
-                else if (key === 'awards') score = val / 200;
-                score += (Math.random() * 0.1); 
+                // Normalize roughly
+                if (key === 'fame') score = val; // 1-40
+                else if (key === 'debutYear') score = (2025 - val) * 2; // Younger is worse usually in this logic? No, wait. 
+                // debutYear: Lower is better (Older group) in our logic.
+                // So (2025 - val) makes older groups (e.g. 2005 -> 20) have higher score than newer (2022 -> 3).
+                else if (key === 'members') score = val * 3;
+                else if (key === 'albums') score = val * 4;
+                else if (key === 'awards') score = val / 5; // Awards can be 400+, scale down
+                
+                // Add randomness so AI isn't perfect
+                score += (Math.random() * 5); 
+
                 if (score > bestScore) { bestScore = score; bestStat = key; }
             });
             performMoveLegacy(bestStat);
@@ -685,30 +782,34 @@ const App: React.FC = () => {
     return (
       <div className="h-[100dvh] flex flex-col items-center justify-center p-4 bg-[#0a0a0a] text-center overflow-hidden relative">
         
-        {/* --- VIBRANT BACKGROUND & ATMOSPHERE --- */}
+        {/* --- VIBRANT BACKGROUND --- */}
         <div className="absolute inset-0 z-0">
-            {/* Pulsing Neon Blobs */}
             <div className="absolute top-[-30%] left-[-20%] w-[80%] h-[80%] bg-purple-600/30 rounded-full blur-[120px] animate-pulse"></div>
             <div className="absolute bottom-[-30%] right-[-20%] w-[80%] h-[80%] bg-pink-600/30 rounded-full blur-[120px] animate-pulse delay-1000"></div>
             <div className="absolute top-[30%] left-[30%] w-[50%] h-[50%] bg-cyan-500/20 rounded-full blur-[100px] animate-pulse delay-700"></div>
-            
-            {/* Star Dust */}
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-40 mix-blend-screen"></div>
         </div>
 
-        {/* --- STAGE LASERS (CSS Gradients) --- */}
+        {/* --- STAGE LIGHTS --- */}
         <div className="absolute inset-0 pointer-events-none z-0 opacity-60 mix-blend-screen">
            <div className="absolute top-[-10%] left-1/2 w-1 h-[150%] bg-gradient-to-b from-transparent via-cyan-400 to-transparent transform -rotate-[35deg] origin-top blur-[2px] animate-spotlight-l"></div>
            <div className="absolute top-[-10%] left-1/2 w-1 h-[150%] bg-gradient-to-b from-transparent via-fuchsia-400 to-transparent transform rotate-[35deg] origin-top blur-[2px] animate-spotlight-r"></div>
-           <div className="absolute top-[-10%] left-1/2 w-2 h-[150%] bg-gradient-to-b from-transparent via-violet-400 to-transparent transform rotate-[0deg] origin-top blur-[4px] animate-pulse"></div>
         </div>
+
+        {/* --- MUSIC TOGGLE --- */}
+        <button 
+            onClick={toggleMusic}
+            className={`absolute top-4 right-4 z-50 p-3 rounded-full border border-white/20 backdrop-blur-md transition-all duration-300 hover:scale-110
+                ${isMusicOn ? 'bg-pink-600 text-white shadow-[0_0_15px_rgba(236,72,153,0.6)]' : 'bg-black/40 text-gray-400 hover:text-white'}
+            `}
+        >
+            {isMusicOn ? <Volume2 className="w-6 h-6 animate-pulse" /> : <VolumeX className="w-6 h-6" />}
+        </button>
 
         {/* --- MAIN CONTENT --- */}
         <div className="mb-12 relative z-20">
-           {/* Glow behind Title */}
            <div className="absolute -inset-10 bg-gradient-to-r from-pink-500/30 to-purple-500/30 rounded-full blur-3xl opacity-70 animate-pulse"></div>
            
-           {/* LOGO TITLE */}
            <div className="relative transform hover:scale-105 transition-transform duration-500 group">
                 <div className="flex justify-center items-center gap-3 mb-4">
                     <Star className="w-8 h-8 text-yellow-300 animate-spin-slow fill-yellow-300" />
@@ -724,19 +825,6 @@ const App: React.FC = () => {
                      <div className="text-3xl md:text-5xl font-black text-white tracking-[0.2em] mt-2 drop-shadow-[0_5px_5px_rgba(0,0,0,1)] uppercase italic transform -skew-x-12">
                         SUPER TRUNFO
                     </div>
-                    {/* Neon underline */}
-                    <div className="absolute -bottom-2 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-fuchsia-500 blur-[1px]"></div>
-                </div>
-                
-                {/* Visualizer Lines */}
-                <div className="flex justify-center items-end gap-1.5 h-10 mt-6 opacity-80">
-                    {[...Array(12)].map((_, i) => (
-                        <div key={i} className={`w-2 rounded-t-full ${i % 2 === 0 ? 'bg-cyan-400' : 'bg-pink-500'}`} 
-                             style={{ 
-                                 animation: `equalizer 0.${5+i%5}s infinite ease-in-out`,
-                                 boxShadow: `0 0 10px ${i % 2 === 0 ? 'cyan' : 'magenta'}`
-                             }}></div>
-                    ))}
                 </div>
            </div>
         </div>
@@ -779,56 +867,40 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* --- CREDITS --- */}
-        <div className="absolute bottom-2 left-0 w-full text-center z-50 pointer-events-none">
-            <p className="text-[10px] text-white/20 hover:text-white/40 transition-colors cursor-default font-mono tracking-widest uppercase">
-                Dev: Thiago M. Bittencourt <span className="mx-2 text-pink-500/50">•</span> Art: Isabella P. Bittencourt <span className="mx-2 text-pink-500/50">•</span> UX Test: Benicio P. Bittencourt
-            </p>
-        </div>
-
-        {/* --- ENHANCED DANCING SHADOWS (K-POP GROUP SILHOUETTE) --- */}
+        {/* --- DANCERS --- */}
         <div className="absolute bottom-0 left-0 w-full h-[40vh] z-10 pointer-events-none flex items-end justify-center overflow-hidden">
-             
-             {/* Stage Floor Light (Fog/Mist) */}
              <div className="absolute bottom-0 w-full h-full bg-gradient-to-t from-fuchsia-900 via-purple-900/30 to-transparent opacity-80"></div>
-             
-             {/* Back Row Dancers (Backup Dancers) */}
-             <div className="absolute bottom-4 flex items-end justify-center gap-20 md:gap-32 opacity-40 transform scale-75 blur-[1px]">
-                 {[0, 1, 2, 3].map((i) => (
-                     <div key={`back-${i}`} 
-                          className="shadow-dancer text-black transform origin-bottom animate-dance" 
-                          style={{ animationDelay: `${i * 0.3}s`, animationDuration: '1.5s' }}>
-                         <User size={160} fill="#050505" strokeWidth={0} />
-                     </div>
-                 ))}
-             </div>
-
-             {/* Front Row Dancers (Idols) */}
              <div className="absolute bottom-[-20px] md:bottom-[-40px] flex items-end justify-center gap-6 md:gap-12 opacity-100 z-20">
                  {[0, 1, 2, 3, 4].map((i) => (
                      <div key={`front-${i}`} 
                           className="shadow-dancer text-black transform origin-bottom animate-dance" 
                           style={{ 
                               animationDelay: `${i * 0.15}s`, 
-                              transform: `scale(${i === 2 ? 1.1 : 0.95})`, // Center member slightly bigger
+                              transform: `scale(${i === 2 ? 1.1 : 0.95})`, 
                               filter: 'drop-shadow(0 0 20px rgba(0,0,0,0.5))' 
                           }}>
                          <User size={180 + (i === 2 ? 40 : 0)} fill="#000000" strokeWidth={0} />
                      </div>
                  ))}
              </div>
-             
-             {/* Stage Floor Edge (Foreground Darkness) */}
-             <div className="absolute bottom-0 w-full h-16 bg-gradient-to-t from-black via-black/90 to-transparent z-30"></div>
         </div>
       </div>
     );
   }
 
-  // --- NEW LOBBY SCREEN WITH VIRTUAL WAITING ROOM ---
+  // --- LOBBY ---
   if (gameState === GameState.LOBBY) {
       return (
         <div className="h-[100dvh] flex flex-col items-center justify-center bg-gray-900 p-6 relative">
+             <button 
+                onClick={toggleMusic}
+                className={`absolute top-4 right-4 z-50 p-2 rounded-full border border-white/20 backdrop-blur-md transition-all duration-300
+                    ${isMusicOn ? 'bg-pink-600 text-white' : 'bg-black/40 text-gray-400'}
+                `}
+            >
+                {isMusicOn ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+
             <button onClick={() => { setGameState(GameState.START); if (peerRef.current) peerRef.current.destroy(); }} className="absolute top-4 left-4 text-white/50 hover:text-white flex items-center gap-2">
                 <XCircle className="w-6 h-6" /> Sair
             </button>
@@ -837,9 +909,7 @@ const App: React.FC = () => {
                 <h2 className="text-3xl font-bold text-white mb-2">Sala de Espera</h2>
                 <p className="text-gray-400 mb-8">{gameMode === GameMode.ONLINE_HOST ? 'Você é o Anfitrião' : 'Você é o Convidado'}</p>
 
-                {/* --- VIRTUAL ROOM AVATARS --- */}
                 <div className="flex justify-center items-center gap-8 mb-8">
-                    
                     {/* YOU */}
                     <div className="flex flex-col items-center gap-3">
                         <div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center relative bg-gray-700 ${isPlayerReady ? 'border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-blue-400'}`}>
@@ -847,18 +917,9 @@ const App: React.FC = () => {
                             {isPlayerReady && <div className="absolute -bottom-2 -right-2 bg-green-500 rounded-full p-1"><CheckCircle className="w-5 h-5 text-white" /></div>}
                         </div>
                         <span className="font-bold text-white">VOCÊ</span>
-                        <span className={`text-xs uppercase px-2 py-1 rounded ${isPlayerReady ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-                            {isPlayerReady ? 'PRONTO' : 'AGUARDANDO'}
-                        </span>
                     </div>
 
-                    <div className="flex flex-col items-center">
-                         <div className="h-[2px] w-10 bg-white/10"></div>
-                         <div className="p-2 bg-black/40 rounded-full border border-white/10 my-2">
-                            <span className="font-mono text-xs text-yellow-500">VS</span>
-                         </div>
-                         <div className="h-[2px] w-10 bg-white/10"></div>
-                    </div>
+                    <div className="font-mono text-yellow-500">VS</div>
 
                     {/* OPPONENT */}
                     <div className="flex flex-col items-center gap-3">
@@ -867,49 +928,29 @@ const App: React.FC = () => {
                                 ? (isOpponentReady ? 'border-green-500 bg-gray-700 shadow-[0_0_20px_rgba(34,197,94,0.5)]' : 'border-red-400 bg-gray-700') 
                                 : 'border-white/10 border-dashed bg-transparent'}
                         `}>
-                            {connectionStatus === 'connected' ? (
-                                <User className="w-12 h-12 text-white" />
-                            ) : (
-                                <Loader2 className="w-8 h-8 text-white/30 animate-spin" />
-                            )}
+                            {connectionStatus === 'connected' ? <User className="w-12 h-12 text-white" /> : <Loader2 className="w-8 h-8 text-white/30 animate-spin" />}
                             {isOpponentReady && <div className="absolute -bottom-2 -right-2 bg-green-500 rounded-full p-1"><CheckCircle className="w-5 h-5 text-white" /></div>}
                         </div>
                         <span className="font-bold text-white">{connectionStatus === 'connected' ? 'OPONENTE' : '...'}</span>
-                         <span className={`text-xs uppercase px-2 py-1 rounded 
-                            ${connectionStatus !== 'connected' ? 'text-transparent' : 
-                              isOpponentReady ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-                            {isOpponentReady ? 'PRONTO' : 'AGUARDANDO'}
-                        </span>
                     </div>
-
                 </div>
 
-                {/* --- CONNECTION STATUS & CONTROLS --- */}
                 <div className="bg-black/30 rounded-xl p-4 border border-white/5">
                     {connectionStatus === 'connecting' && <div className="flex items-center justify-center gap-2 text-yellow-400"><Loader2 className="animate-spin" /> Conectando...</div>}
                     {connectionStatus === 'error' && <p className="text-red-400">{message}</p>}
                     
-                    {/* HOST CONTROLS */}
-                    {gameMode === GameMode.ONLINE_HOST && (
-                        <>
-                            {connectionStatus === 'idle' && peerId && (
-                                <div className="space-y-4">
-                                    <div className="flex items-center gap-2 bg-black/50 p-4 rounded-xl border border-white/10 group">
-                                        <code className="text-2xl font-mono text-emerald-400 tracking-wider flex-1">{peerId}</code>
-                                        <button 
-                                            onClick={() => { navigator.clipboard.writeText(peerId); setMessage("Código copiado!"); }}
-                                            className="p-2 hover:bg-white/10 rounded-lg"
-                                        >
-                                            <Copy className="w-5 h-5 text-gray-400 group-hover:text-white" />
-                                        </button>
-                                    </div>
-                                    <p className="text-sm text-gray-400 animate-pulse">Compartilhe o código e aguarde o oponente...</p>
-                                </div>
-                            )}
-                        </>
+                    {gameMode === GameMode.ONLINE_HOST && connectionStatus === 'idle' && peerId && (
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-2 bg-black/50 p-4 rounded-xl border border-white/10 group">
+                                <code className="text-2xl font-mono text-emerald-400 tracking-wider flex-1">{peerId}</code>
+                                <button onClick={() => { navigator.clipboard.writeText(peerId); setMessage("Código copiado!"); }} className="p-2 hover:bg-white/10 rounded-lg">
+                                    <Copy className="w-5 h-5 text-gray-400 group-hover:text-white" />
+                                </button>
+                            </div>
+                            <p className="text-sm text-gray-400 animate-pulse">Compartilhe o código...</p>
+                        </div>
                     )}
 
-                    {/* GUEST CONTROLS */}
                     {gameMode === GameMode.ONLINE_GUEST && connectionStatus === 'idle' && (
                         <div className="space-y-4">
                             <input 
@@ -919,31 +960,16 @@ const App: React.FC = () => {
                                 placeholder="Cole o código do anfitrião"
                                 className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-center text-white font-mono text-lg focus:outline-none focus:border-emerald-500"
                             />
-                            <button
-                                onClick={connectToPeer}
-                                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2"
-                            >
+                            <button onClick={connectToPeer} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2">
                                 <Zap className="w-5 h-5" /> Entrar na Sala
                             </button>
                         </div>
                     )}
 
-                    {/* READY BUTTON (SHOWN WHEN CONNECTED) */}
-                    {connectionStatus === 'connected' && (
-                        <div className="mt-4 animate-slide-up">
-                            {!isPlayerReady ? (
-                                <button
-                                    onClick={handlePlayerReady}
-                                    className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xl rounded-xl shadow-lg transform hover:scale-[1.02] transition-all flex items-center justify-center gap-3"
-                                >
-                                    <CheckCircle className="w-6 h-6" /> ESTOU PRONTO!
-                                </button>
-                            ) : (
-                                <div className="p-4 bg-green-900/30 border border-green-500/30 rounded-xl text-green-400 font-bold animate-pulse">
-                                    {isOpponentReady ? 'Iniciando jogo...' : 'Aguardando oponente ficar pronto...'}
-                                </div>
-                            )}
-                        </div>
+                    {connectionStatus === 'connected' && !isPlayerReady && (
+                        <button onClick={handlePlayerReady} className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xl rounded-xl shadow-lg transform hover:scale-[1.02] transition-all flex items-center justify-center gap-3 mt-4">
+                            <CheckCircle className="w-6 h-6" /> ESTOU PRONTO!
+                        </button>
                     )}
                 </div>
             </div>
@@ -951,45 +977,43 @@ const App: React.FC = () => {
       );
   }
 
-  // --- GAME OVER / WAITING SCREENS ---
-
+  // --- GAME OVER ---
   if (gameState === GameState.GAME_OVER) {
-    const isWin = scores.player > scores.cpu;
+    const isWin = scores.player > scores.cpu; // Simplified check, usually winner is whoever has cards
+    // But in GameOver logic, usually one deck is 0. 
+    // If player has cards (length > 0) and cpu has 0, player win.
+    const realWin = playerDeck.length > 0;
+    
     return (
-      <div className="h-[100dvh] flex flex-col items-center justify-center p-6 bg-gray-900 text-center">
-        <div className={`text-6xl mb-6 ${isWin ? 'text-yellow-400 animate-bounce' : 'text-gray-500'}`}>
-          {isWin ? <Trophy className="w-24 h-24 mx-auto" /> : '💀'}
+      <div className="h-[100dvh] flex flex-col items-center justify-center p-6 bg-gray-900 text-center relative">
+         <button onClick={toggleMusic} className="absolute top-4 right-4 z-50 p-2 rounded-full border border-white/20 backdrop-blur-md">
+            {isMusicOn ? <Volume2 className="w-5 h-5 text-white" /> : <VolumeX className="w-5 h-5 text-gray-400" />}
+        </button>
+
+        <div className={`text-6xl mb-6 ${realWin ? 'text-yellow-400 animate-bounce' : 'text-gray-500'}`}>
+          {realWin ? <Trophy className="w-24 h-24 mx-auto" /> : '💀'}
         </div>
-        <h1 className="text-3xl font-bold text-white mb-4">JOGO FINALIZADO</h1>
+        <h1 className="text-3xl font-bold text-white mb-4">FIM DE JOGO</h1>
         <p className="text-pink-400 mb-8 text-xl font-bold px-4">{message}</p>
         
-        {/* RESTART BUTTON (SAME ROOM) */}
         <button
             onClick={() => {
-                if (isOnline) {
-                    if (gameMode === GameMode.ONLINE_HOST) {
-                        startOnlineGameLogic();
-                    } else {
-                        sendMessage({ type: 'RESTART' });
-                        setMessage("Solicitação de revanche enviada...");
-                    }
+                if (isOnline && gameMode === GameMode.ONLINE_HOST) {
+                    startOnlineGameLogic();
+                } else if (isOnline) {
+                    sendMessage({ type: 'RESTART' });
+                    setMessage("Solicitação de revanche enviada...");
                 } else {
                     startGame(gameMode);
                 }
             }}
-            className="flex items-center px-8 py-3 mb-4 bg-emerald-600 text-white rounded-full font-bold hover:bg-emerald-500 transition-colors shadow-[0_0_20px_rgba(16,185,129,0.5)] border border-emerald-400 hover:scale-105 transform duration-200"
+            className="flex items-center px-8 py-3 mb-4 bg-emerald-600 text-white rounded-full font-bold hover:bg-emerald-500 transition-colors shadow-lg border border-emerald-400"
         >
             <Zap className="mr-2 fill-white" />
             Jogar Novamente {isOnline && "(Mesma Sala)"}
         </button>
 
-        <button 
-          onClick={() => {
-              if (peerRef.current) peerRef.current.destroy();
-              setGameState(GameState.START);
-          }}
-          className="flex items-center px-6 py-2 bg-indigo-900/50 text-indigo-200 rounded-full font-bold hover:bg-indigo-800 transition-colors border border-indigo-500/30"
-        >
+        <button onClick={() => { if (peerRef.current) peerRef.current.destroy(); setGameState(GameState.START); }} className="flex items-center px-6 py-2 bg-indigo-900/50 text-indigo-200 rounded-full font-bold border border-indigo-500/30">
           <RefreshCw className="mr-2 w-4 h-4" />
           Menu Principal
         </button>
@@ -1001,6 +1025,7 @@ const App: React.FC = () => {
       return (
         <div className="h-[100dvh] flex flex-col items-center justify-center bg-gray-950 p-6 text-center relative overflow-hidden">
              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5"></div>
+             
              <div className="z-10 bg-gray-900/80 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl max-w-md w-full">
                 <User className={`w-16 h-16 mx-auto mb-4 ${turn === 'PLAYER' ? 'text-blue-400' : 'text-red-400'}`} />
                 <h2 className="text-2xl font-bold text-white mb-2">
@@ -1024,45 +1049,42 @@ const App: React.FC = () => {
   }
 
   const isResult = gameState === GameState.RESULT;
-  
-  // LOGIC TO MINIMIZE OPPONENT CARD:
-  // Whenever it is NOT the result screen, we minimize the opponent card.
-  // This gives the player maximum space to view their own card stats,
-  // even when waiting for the opponent to play.
   const isOpponentMinimized = !isResult;
+  // Player minimized only in pass-n-play when it's cpu turn (meaning player 2 turn) and we are hiding P1
+  // But logic above handles Waiting screen. 
+  // In playing, we want both visible if RESULT, or only active visible.
+  // Actually, for better UX: always show my card. Show opponent minimized until result.
   
-  // Logic for Player minimized (only for 2P local pass-and-play to hide non-active)
-  // For online, player always sees their card.
-  const isPlayerMinimized = !isResult && turn === 'CPU' && gameMode === GameMode.TWO_PLAYERS;
-  
-  const opponentHeightClass = isResult 
-      ? 'flex-1' 
-      : (isOpponentMinimized ? 'h-12 shrink-0' : 'flex-1');
-      
-  const playerHeightClass = isResult
-      ? 'flex-1'
-      : (isPlayerMinimized ? 'h-12 shrink-0' : 'flex-1');
+  const opponentHeightClass = isResult ? 'flex-1' : (isOpponentMinimized ? 'h-14 shrink-0' : 'flex-1');
+  const playerHeightClass = 'flex-1'; 
 
   const opponentVariant = isResult ? 'result' : (isOpponentMinimized ? 'minimized' : 'playing');
-  const playerVariant = isResult ? 'result' : (isPlayerMinimized ? 'minimized' : 'playing');
-
-  const showNextButton = isResult; 
+  const playerVariant = isResult ? 'result' : 'playing';
 
   return (
     <div className="h-[100dvh] bg-gray-900 flex flex-col overflow-hidden relative">
       <div className="h-10 bg-black/80 backdrop-blur-md flex items-center justify-between px-3 border-b border-white/10 z-50 shrink-0 text-xs">
          <div className="flex gap-2 items-center text-blue-300 font-bold">
-            <span className="bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center">{playerDeck.length}</span>
-            <span>{isOnline ? 'VOCÊ' : 'P1'} ({scores.player})</span>
+            <span className="bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center">{scores.player}</span>
+            <span>{isOnline ? 'VOCÊ' : 'P1'}</span>
          </div>
          <div className="flex items-center gap-1 font-mono text-gray-500 uppercase tracking-widest text-[10px]">
              {isOnline && <Wifi className={`w-3 h-3 ${connectionStatus === 'connected' ? 'text-green-500' : 'text-red-500'}`} />}
             {gameState === GameState.PLAYING ? 'ESCOLHA' : 'RESULTADO'}
          </div>
          <div className="flex gap-2 items-center text-red-300 font-bold">
-            <span>{isOnline ? 'RIVAL' : (gameMode === GameMode.SINGLE_PLAYER ? 'CPU' : 'P2')} ({scores.cpu})</span>
-            <span className="bg-red-600 text-white w-5 h-5 rounded-full flex items-center justify-center">{cpuDeck.length}</span>
+            <span>{isOnline ? 'RIVAL' : (gameMode === GameMode.SINGLE_PLAYER ? 'CPU' : 'P2')}</span>
+            <span className="bg-red-600 text-white w-5 h-5 rounded-full flex items-center justify-center">{scores.cpu}</span>
          </div>
+
+         <button 
+            onClick={toggleMusic}
+            className={`ml-2 p-1.5 rounded-full border border-white/20 transition-all duration-300
+                ${isMusicOn ? 'bg-pink-600 text-white' : 'bg-transparent text-gray-400'}
+            `}
+         >
+            {isMusicOn ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
+         </button>
       </div>
 
        <div className="absolute top-14 left-0 w-full pointer-events-none z-50 flex justify-center">
@@ -1097,7 +1119,7 @@ const App: React.FC = () => {
             )}
         </div>
 
-        {showNextButton && (
+        {isResult && (
              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 w-full flex justify-center pointer-events-auto">
                  <button 
                  onClick={() => resolveRound(roundWinner || 'DRAW')}
